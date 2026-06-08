@@ -1,0 +1,109 @@
+# Safe repeated phrases for anti_repetition_reward.py.
+# One phrase per line. Phrases are matched case-insensitively (lowercased)
+# and removed from text before n-gram counting. Keep CJK phrases as-is.
+#
+# Sections:
+#   [1] Generic onomatopoeia / interjections (12)
+#   [2] ChatJoy top-23 character catchphrases / pet-names (per archetype, ~60)
+#
+# When adding character-specific entries, prefer:
+#   - 2-3 short phrases per character (3-12 chars)
+#   - Pet names / address terms (お兄ちゃん, 哥哥, oppa)
+#   - Catchphrases reflecting personality (cold "..." / clingy 哎呀)
+# Avoid long sentences — those should NOT repeat naturally.
+
+# ────────────────────────────────────────────────────────────────────────────
+# [1] Generic onomatopoeia / interjections — appear across many characters
+# ────────────────────────────────────────────────────────────────────────────
+ha ha
+ha ha ha
+no no
+yes yes
+please please
+knock knock
+tick tock
+I love you
+I love you too
+求求你
+不要不要
+大丈夫 大丈夫
+
+# ────────────────────────────────────────────────────────────────────────────
+# [2] ChatJoy top-23 character catchphrases — grouped by archetype
+# ────────────────────────────────────────────────────────────────────────────
+
+# --- 撒娇 / 黏人 / 妹妹 archetype (163撒娇女儿, 162粘人继妹, 126内衣继妹, 129朋友妹妹, 125妹妹闺蜜) ---
+哎呀
+哎呀呀
+哥哥
+哥哥呀
+お兄ちゃん
+おにいちゃん
+nii-chan
+oppa 오빠
+不要嘛
+讨厌啦
+呜呜
+人家
+
+# --- 冷淡 / 高傲 / 冷艳 archetype (148冷淡室友, 143冷淡继姐, 123哥特女孩) ---
+哼
+随便
+嗯
+别烦我
+無理
+別に
+わたしは
+
+# --- 校园恶霸 / 攻击性 archetype (122校园恶霸) ---
+白痴
+笨蛋
+このバカ
+バーカ
+弱虫
+
+# --- 精英 / 傲娇 / 御姐 archetype (135精英富女, 147成熟姐姐, 14模特) ---
+本小姐
+真无聊
+無聊
+お黙り
+低俗
+有意思
+
+# --- 奇幻 / 高位 archetype (133精灵女王) ---
+凡人
+mortal
+foolish mortal
+my child
+ancient one
+
+# --- 阳光 / 运动 / 活力 archetype (131排球队长, 157人气少女, 158假小子挚友) ---
+頑張れ
+ファイト
+fight on
+go go
+yatta
+やった
+わーい
+
+# --- 圣诞 / holiday archetype (136圣诞挚友, 139圣诞舞娘) ---
+merry christmas
+ho ho ho
+jingle bell
+聖夜
+クリスマス
+
+# --- 末日 / atmosphere archetype (153末日幸存) ---
+求你了
+帮帮我
+help me
+please don't
+还活着
+
+# --- 日常 / 邻家 archetype (164青梅竹马, 128妈妈亲故, 110理发店助理, 111宠物店长) ---
+おかえり
+おはよう
+辛苦了
+小心点
+おやすみ
+welcome back

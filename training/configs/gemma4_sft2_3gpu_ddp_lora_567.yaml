@@ -1,0 +1,47 @@
+### model
+model_name_or_path: /home/ps/hanjiaqi/LlamaFactory/chatjoy/models/gemma4-26b-a4b-it-textonly
+trust_remote_code: true
+quantization_bit: 4
+force_text_only: true
+low_cpu_mem_usage: false
+
+### method
+stage: sft
+do_train: true
+finetuning_type: lora
+lora_rank: 32
+lora_alpha: 64
+lora_target: q_proj,k_proj,v_proj,o_proj
+
+### dataset
+dataset: clean32_for_sft2_llamafactory
+dataset_dir: /home/ps/hanjiaqi/LlamaFactory/data
+template: gemma4
+cutoff_len: 3072
+preprocessing_num_workers: 16
+dataloader_num_workers: 4
+train_on_prompt: false
+
+### output
+output_dir: /home/ps/hanjiaqi/LlamaFactory/chatjoy/saves/gemma4-26b-a4b/sft2_ddp_lora_3gpu_567_cut3072
+logging_steps: 1
+save_steps: 200
+plot_loss: false
+overwrite_output_dir: false
+save_only_model: false
+report_to: none
+
+### train
+per_device_train_batch_size: 1
+gradient_accumulation_steps: 8
+learning_rate: 1.0e-4
+num_train_epochs: 2.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.03
+bf16: true
+pure_bf16: true
+flash_attn: disabled
+gradient_checkpointing: true
+upcast_layernorm: false
+ddp_timeout: 180000000
+resume_from_checkpoint: null

@@ -1,0 +1,31 @@
+# Large data / model weights — documented in DATA.md, never committed
+*.parquet
+*.safetensors
+*.bin
+*.pt
+*.ckpt
+*.gguf
+*.awq
+
+# Big datasets (keep only data/samples/*)
+data/*.json
+data/*.jsonl
+!data/samples/
+chatjoy_dataset/
+saves/
+ckpt/
+models/
+outputs/
+
+# Logs / caches / scratch
+*.log
+*.pid
+__pycache__/
+.cache/
+.gradio/
+*.bak*
+
+# Secrets
+.env
+.env.*
+!.env.example
