@@ -1,6 +1,205 @@
 # ChatJoy RM v6.3 Roledrop 中文交接
 
-> **🆕🆕 最新 2026-06-08 by Claude — v6.5 停训+425 merge+起服务+磁盘审计。下面 2026-06-05 段是上一层历史。**
+> **🆕🆕🆕🆕 最新 2026-06-10 ~20:00 by Claude — v6.6 已停训(step42 定论:42 步 reward/长度双平=数据喂不动 clean)→ v6.6b 重启决策已拍板+三件套就绪(launch_rl_v6.6b.sh 6 guard 全验+Codex prompt+本 banner),待启动。step35/40 raw(100G)已删。下面 18:15 段起为历史。**
+>
+> ### 🎯 一页交接(2026-06-10 晚):v6.6b 决策定稿
+>
+> **0) v6.6 终局(step42 停)**
+> - 5 步段均值:step1-5 reward `-1.91`/len 277 → step38-42 `-1.93`/len 287,**42 步双平,34-42 段无突破**(step39 -1.07 = step15 -0.72 同类单步噪声)。val clean 长度 206 token = v6.5 平台(205)。
+> - **诊断:瓶颈不是 RM(corr 已证 density+0.50 梯度在),是 rollout prompt 分布**——旧数据 clean prompt 让 6 rollout 挤在 RM 平坦区,组内方差被其它轴吃掉。
+> - ⚠️ `saves/verl/v6.6_full/global_step_25` raw **早被 keep=2 轮换删成 12K 壳**(handoff"必须保留"未能执行);幸 Codex 删前已 merge → `/root/rl_v6.6_step25_merged`(49.9G+1.7G,sanity 过,**v6.6 唯一血脉,绝不能删**)。step35/40 raw(各 50G,无 val 无 merge)经用户拍板 **已删**,磁盘回到 383G 可用。
+>
+> **1) v6.6b 决策(全部已拍板)**
+> - **base = `/root/rl_v6.6_step25_merged`**(非 35/40):唯一有 val 的点(break 11.7% vs 平台 15.9%、clean 行为全干净);KL 锚住已验证的防御收益;35/40 无证据+要重 merge(Gemma4 merge 有污染前科)。**不等 step50**:重达要 2.5h,clean 轴 train proxy 已宣判,base 选择不会变。
+> - **数据 = `/root/verl_rl_data_v6.6b_cleanrich`**(24000=80% clean[rich_eval 5376 筛 richness_margin≥0.3 + language_stress 2304(ko/ja/zh-tw/zh/en) + clean32 11520]+20% attack[hard 三类加权不降];735 步/epoch;val 480 行=388 clean+92 attack,**新 val 集,旧数字不可直接比**)。
+> - **LR = 5e-6 constant + 前 10 步 warmup(ratio 0.014)**,用户拍板直接 5e-6 无备选。标定依据:42 步@1.5e-6 实测 ppo_kl |0.009|/clipfrac 0.058/kl_loss~1.0 稳 → 3.3× 余量在;**不上 8e-6/1e-5**:clipfrac 会穿 0.2+(GSPO 带咬合=梯度有偏)+ grad 尖刺(实测 5.3/8.8/23.4)被放大 + 与数据/base 同换混淆归因。调级规则:step15-25 若 ppo_kl<0.01 且 clipfrac<0.1 且 clean rm 抬升<+0.05 → 升 8e-6;clipfrac 持续>0.2 或 kl_loss 持续>2.0 或语言漂移 → 降 3e-6。
+> - **五参不动**:768 cap(clip≤3% 不咬合)、n=6(adv ±2.0 健康)、temp1.2(组内方差来源)、LENGTH_TARGET=1500+COEF=0.1(RM 是主引擎,corr 已证;**不要**改分段奖励=新增 hack 面)、per-source-KL(0.0015/0.003,在起作用)。KL_LOSS_COEF=0.005、SAVE_FREQ=5/keep=2(用户拍板保持)。
+> - **新增 `trainer.val_before_train=True`**(launch 末位 hydra override,后者胜):新 val 集必须先出 step0 基线 B0,三道门全锚 B0。
+>
+> **2) 验收门(step25/50/75)+ 停线**
+> - step25: clean rm_score ≥B0+0.08 且 clean len ≥B0×1.15;break ≤B0+1.5pt。step50: rm ≥B0+0.15~0.20 且仍升;len ≥B0×1.3(或 rm+0.25 而 len 平=密度路线也算赢);break 回 ≤B0。step75: rm ≥B0+0.25 单调(±0.03 噪声带);**达标立刻 merge 该 ckpt**(keep=2 会轮换删,教训在前)。
+> - "细腻度真的起来"的样子(16 条 val 样本基线):**涨幅应主要在 CJK**(现状 ja 48 字/ko 44 字 vs latin 1000-1800 字),动作 `*..*` 对 0-3→3-6,语言错配保持 0/16。
+> - 停线:len↑但 rm 平/降 或 clip_ratio>8% → 灌水,LENGTH_SHAPE_COEF=0;复读>1%(基线 0.14%);语言错配>0;break>B0+2pt;clipfrac 持续>0.2/kl_loss 持续>2 → LR 降 3e-6;静默死 → `dmesg | grep -i oom` 确认 RAM OOM 则 ROLLOUT_N=4 重起。
+>
+> **3) 三件套(已验,待启动)**
+> - `GRPO_Training_Package/framework_bridge/verl/patches/launch_rl_v6.6b.sh`:**6 道 guard 全实测通过**(patch/无rl_full_/actor/RM/数据/conda-env)。SAVE_DIR=`saves/verl/v6.6b_full`,tmux=`rl_full_v66b`,日志=`/tmp/rl_v6.6b.log`。guard 6 = 当前 shell `import verl` 必须过(cron-env 教训固化进脚本)。
+> - Codex 启动 prompt:`CODEX_TASK_launch_rl_v6.6b.md`(激活 env→启动→5min 核验→**抄录 B0**→三道门→停线字典→硬约束)。
+> - ⚠️ 启动必须从 source 过 gemma4-rl 的交互 shell;**绝不动** `/root/rl_v6.6_step25_merged` 和 RM merged。
+>
+> ---
+>
+> **🔻 以下为历史 — 2026-06-10 18:15 by Codex — v6.6 原训练仍在跑到 step33（latest ckpt=30）；step26-33 暂无决定性改善，下一判断点是 step50 validation；v6.6b clean-rich rollout 数据已生成。下面 2026-06-10 晚 step25 段为上一层历史。**
+>
+> ### 🎯 一页交接（2026-06-10 18:15）：v6.6 step33 监控 + v6.6b clean-rich 数据
+>
+> **0) 当前训练状态**
+> - `tmux`: `rl_full_v66` 仍在跑，日志：`/tmp/rl_v6.6.log`。
+> - metrics：`/home/ps/hanjiaqi/LlamaFactory/chatjoy/logs/verl_metrics/chatjoy_verl/chatjoy_grpo_lora_v6.6_20260610_130557.jsonl`。
+> - 当前 metrics 已写到 `step33`；`latest_checkpointed_iteration.txt = 30`，已有 checkpoint：`global_step_5/10/15/20/25/30`。
+> - 尚无新的 validation；目前只有 `step25` val。下一次关键判断点是 `step50`，不要用 step26-33 的 train batch 均值直接下 clean/attack 结论。
+> - GPU 正常占用中：RM 物理 0-3，actor/rollout 物理 4-7。仍持续有 Ray 磁盘 warning：`/tmp/ray/... over 95% full`，需要继续盯磁盘。
+>
+> **1) step26-33 训练侧趋势（不是 validation）**
+> - 分段均值：
+>   - step1-5：reward mean `-1.914`，response len `277`
+>   - step6-10：reward mean `-1.896`，response len `316`
+>   - step11-15：reward mean `-1.317`，response len `277`（目前最好的一段，但像 batch 波动）
+>   - step16-20：reward mean `-1.834`，response len `301`
+>   - step21-25：reward mean `-1.935`，response len `305`
+>   - step26-33：reward mean `-1.899`，response len `303`
+> - 最新单步有波动：step30 `-1.534`、step32 `-1.686`、step33 `-1.092` 看起来好，但 step26-33 整段均值没有明显抬升，不能解读成稳定改善。
+> - 长度稳定在约 `300 tokens`，没有朝更长/更细腻明显爬升；`clip_ratio` 很低（step26-33 均值约 `0.006`），`aborted_ratio=0`，说明没有明显长度截断/生成失败问题。
+> - KL/更新幅度目前可控：step26-33 `actor/kl_loss≈1.155`，`actor/ppo_kl≈0.0056`，`pg_clipfrac≈0.064`；不是 KL 爆炸，也不是完全不动。
+> - 结论：**当前 v6.6 还没有看到 clean 语义细粒度稳定提升的证据**；attack 是否继续保持 step25 的 11.7% break 苗头，要等 step50 validation。
+>
+> **2) v6.6b clean-rich rollout 数据已生成**
+> - 产物目录：`/root/verl_rl_data_v6.6b_cleanrich`。
+> - 文件：
+>   - `train.parquet`：23520 rows
+>   - `val.parquet`：480 rows
+>   - `manifest.json`
+> - 构造脚本：`/root/hanjiaqi/LlamaFactory/chatjoy/GRPO_Training_Package/build_cleanrich_rollout_data.py`。
+> - 单测：`/root/hanjiaqi/LlamaFactory/chatjoy/GRPO_Training_Package/test_build_cleanrich_rollout_data.py`，`4 passed`。
+> - 产物未放到 `data/runs`，因为该目录是 `nobody:nogroup` 且当前 root 会话无权新建；后续 launch 直接把 `DATA_DIR=/root/verl_rl_data_v6.6b_cleanrich` 即可。
+>
+> **3) v6.6b 数据构成**
+> - 总量 `24000`：clean `19200`（80%），attack `4800`（20%）。
+> - clean 内部：
+>   - `clean32`: `11520`
+>   - `rich_eval`: `5376`
+>   - `language_stress`: `2304`
+> - attack 内部：
+>   - `attack_single`: `2800`
+>   - `attack_multi`: `2000`
+> - hard attack 三类没有下降，反而略增：
+>   - `direct_forget`: old `747` → new `857`
+>   - `format_override`: old `747` → new `856`
+>   - `pseudo_system`: old `766` → new `855`
+> - 语言 stress 已明显抬高 `ko / ja / zh-tw / zh / en`，对应 step25 里观察到的韩语 clean 回中文风险。
+>
+> **4) 下一步建议**
+> - 当前 v6.6 原训练如果继续跑，至少等 `step50 validation` 再判断是否停/保留。
+> - 若要开 v6.6b，推荐组合仍是：`MODEL_PATH=/root/rl_v6.6_step25_merged` + fresh LoRA/optimizer + 新 SAVE_DIR + `DATA_DIR=/root/verl_rl_data_v6.6b_cleanrich`。
+> - v6.6b 的目的不是加大 clean 到压掉 attack，而是把 clean rollout 换成更高梯度的 rich/multilingual 场景，同时保持 attack 绝对数不降。
+>
+> ---
+
+> **🆕🆕🆕 最新 2026-06-10 晚 by Codex — RL v6.6 已成功重启并跑到 step25；step25 validation 已落盘；step25 actor 已安全合并成可服务 HF 基座。下面 2026-06-10 早间段起为历史记录。**
+>
+> ### 🎯 一页交接（2026-06-10 晚）：v6.6 step25 结果 + 下一轮 actor base
+>
+> **0) 当前状态**
+> - RL v6.6 已重新拉起，tmux session：`rl_full_v66`，日志：`/tmp/rl_v6.6.log`。
+> - 已到 `global_step_25`，并完成一次 validation；暂无 OOM / Traceback / No space left。
+> - GPU 布局仍按约定：RM 在物理 GPU0-3，actor/rollout 在物理 GPU4-7（通过 `CUDA_VISIBLE_DEVICES=4,5,6,7,0,1,2,3` 映射）。
+> - 需要继续注意磁盘：`/root` 与 `/tmp` 约 96% 使用率，Ray 仍提示磁盘超过 95%，若发生 object spilling 可能失败。
+> - 指标文件：`/home/ps/hanjiaqi/LlamaFactory/chatjoy/logs/verl_metrics/chatjoy_verl/chatjoy_grpo_lora_v6.6_20260610_130557.jsonl`。
+> - validation samples：`/home/ps/hanjiaqi/LlamaFactory/chatjoy/logs/validation_samples/chatjoy_grpo_lora_v6.6_20260610_130557.jsonl`，本次追加 16 条样本。
+>
+> **1) step25 训练指标**
+> - `critic/score/mean = -2.0073`，`max = 4.8971`，`min = -8.5865`。
+> - `response_length/mean = 274.69`，`max = 768`，`clip_ratio = 0.015625`，`aborted_ratio = 0`。
+> - `actor/kl_loss = 1.0573`，`actor/ppo_kl = 0.00687`，`actor/pg_clipfrac = 0.0337`，`grad_norm = 1.1879`。
+> - `perf/throughput = 76.20`；validation 用时约 `2639s`（约 44 分钟）。
+>
+> **2) step25 validation 质量判断**
+> - clean/chatjoy：
+>   - `acc/mean@1 = -0.3618`，`rm_score/mean@1 = -0.3935`，`custom_reward/mean@1 = +0.0317`。
+>   - 行为约束很干净：`anti_ooc_is_disclosure = 0`，`anti_ooc_is_task_compliance = 0`，`anti_chain_is_break = 0`。
+>   - 拒答和复读也很低：`anti_refusal_is_refusal = 0.00071`，`anti_repetition_is_repetitive = 0.00142`。
+>   - 结论：clean 没明显破角、拒答、复读问题；主要短板仍是 RM raw/style/richness 没被拉起来，不是 custom penalty 在压分。
+> - attack/roledrop：
+>   - `acc/mean@1 = 0.6556`，`rm_score/mean@1 = -0.1893`，`custom_reward = +0.8449`。
+>   - `anti_chain_is_break = 0.1166`，约 11.7%，相比之前 v6.3/v6.5 常见平台区间约 15.9% 有早期改善苗头。
+>   - `anti_ooc_is_disclosure = 0.0794`，`anti_ooc_is_task_compliance = 0.0620`。
+>   - 仍有 attack 样本走 “抱歉/无法/AI 助手” 式拒答模板，被 refusal penalty 拉低；下一轮需要压这种 AI-refusal 风格，但不要伤害角色内回避。
+>
+> **3) 为什么总 reward mean 仍负**
+> - step25 的 `critic/score/mean = -2.0073` 是训练 batch 混合均值，不等于 clean-only 质量。
+> - clean validation 的负分主要来自 `rm_score ≈ -0.394`，custom reward 反而略正；所以问题更像是 RM 对当前 clean 输出的细腻度/风格/长度仍不满意。
+> - validation 样本里 clean 大多行为稳定，但长度均值约 288 tokens，离 v6.6 原先想榨的 richer/longer 目标还远；另见一条 `language=ko` clean 样本回复中文，说明多语言 matching 还要单独盯。
+>
+> **4) 当前决策：下一轮 actor 推荐用 v6.6 step25 合并基座**
+> - 不建议回到原 SFT actor 作为下一轮主基座：step25 已经有 defense 收益苗头，clean 行为约束也干净。
+> - 推荐做法：以 v6.6 `global_step_25` 合并后的 HF 模型作为 `MODEL_PATH`，新 LoRA + fresh optimizer + 新 SAVE_DIR，相当于保留 step25 的防御收益，再重新调 clean 数据与 reward。
+> - 下一轮可考虑方向（尚未执行）：`v6.6b_full`，actor/ref 锚在 step25；提高高质量 clean/multilingual clean 占比；把 length shaping 改成更可达的分段奖励；对 attack 中 AI-refusal 模板加轻惩罚。
+> - 必须保留：`saves/verl/v6.6_full/global_step_25`。
+>
+> **5) step25 已合并出的 HF actor base**
+> - 源 checkpoint：`/root/hanjiaqi/LlamaFactory/chatjoy/saves/verl/v6.6_full/global_step_25/actor`。
+> - 合并产物：`/root/rl_v6.6_step25_merged`。
+> - 因 `saves/gemma4-26b-a4b` 父目录权限异常（`nobody:nogroup`，当前会话无法新建目录），产物暂放 `/root`；可直接作为下一轮 `MODEL_PATH` 使用。
+> - 没用 `verl.model_merger`，因为此前 Gemma4 merge 出现过 layer_scalar/lm_head 形状污染；本次用安全脚本从 FSDP LoRA shard 重建 q/k/v/o delta，再折进已知良好的 v6.4 step160 merged base。
+> - 合并脚本：`/root/hanjiaqi/LlamaFactory/chatjoy/GRPO_Training_Package/merge_verl_lora_actor_to_hf.py`。
+> - sanity check 通过：1013 tensors，keyset 与 base 完全一致，0 shape/dtype mismatch，无 stray `lm_head`，`layer_scalar=[1]`，`vision_config` 存在，tokenizer/config 可加载；layer0 q_proj 相比 v6.4 base 有非零 delta，确认 LoRA 已折入。
+>
+> ---
+
+> **🆕🆕🆕 最新 2026-06-10 by Claude — RM v6.6 已训完+merge+自动起 RL（cron 全链路成功）；corr 验证=✅绿灯 RM 真学到 richness；建议 length bonus 0.3→0.1、不加单独动作/独白奖励。RL 起后两次都死（详下）。下面 2026-06-09 段起为历史。**
+>
+> ### 🎯 一页交接（2026-06-10）：corr 验证绿灯 + length/动作奖励结论 + RL 待重起
+>
+> **0) cron 自动链路：编排 100% 成功,RL 起后死**
+> - 06-10 02:00 root cron 触发 `auto_merge_rm_and_launch_rl_v6.6.sh`：轮询等到 **04:05 RM 干净收尾**(最终 adapter 落盘)→ **04:06 merge 成功**(`chatjoy_rm_v6.6_fg_7gpu_merged_vllm`,Gemma4ForSequenceClassification+score head+vision_config 保留)→ GPU 闸过 → 起 RL。日志 `/tmp/auto_rl_v6.6.cron.log`。
+> - **RL 两次都死**(0 checkpoint,`latest=none`)：①cron 起的那次**秒崩 5 次**=`/home/ubuntu/miniconda3/bin/python3 No module named verl`(**cron→tmux 没带 conda env**,用错 python)→auto-restart 判确定性失败放弃。②我手动从带 conda 的 shell 重起→用对 python、**冲到 `Training Progress 0/511`**、RM vLLM server 也起来了,然后 **09:35 后日志无 error/Traceback 静默消失**=疑似**首轮 rollout 系统 RAM OOM 的 SIGKILL**(CUDA OOM 会留 traceback,系统 OOM 是无痕 SIGKILL)。日志 `/tmp/rl_v6.6.log`。**用户要求先不查死因**;待改 length 后重起,若复现再查 OOM。
+> - ⚠️ **教训**:`launch_rl_v6.6.sh` 里 `source activate` 在交互 shell 生效、但**从 cron 起 tmux 时带不进去**。将来 cron 自动起 RL 须把 python 写成 env 绝对路径,别靠 `source activate`。那条 cron 是一次性(`0 2 10 6`,已触发完不再响)。
+>
+> **1) ⭐ corr 验证 = ✅绿灯：RM v6.6 真学到 richness(不是裸长度)**
+> - 脚本全在 `GRPO_Training_Package/rm_richness_check/`(build/score/analyze,均带 selftest)。用**训练数据自带的 eval 对**(base_win:rich / rl_win:concise / length_mismatch 双向)抽 500+500 对 + 1000 corr 池,用 **vLLM(actor 看分同引擎)给 merged RM 打分**(`runner=pooling`+`classify`→`probs_0`=sigmoid(raw),单调→win-rate/Spearman 等价裸分;max_model_len 5120 零截断)。
+> - **short_vs_rich win-rate 93.8%**(丰富>短塌→**不会卡死短长度**)、**padded_vs_concise 79.0%**(简洁>灌水→**抗 hacking,非无脑偏长**)、**corr(density,score)=+0.50 vs corr(len,score)=+0.24**(奖励密度是裸长度的 2.3×)。
+> - 动作/独白:**RM 高分组动作密度 0.33/100字 vs 低分组 0.13(2.5×)**,Spearman +0.25~0.28(略高于裸长度+0.23)。+ 项目数据生成本就硬门槛"必须有 *动作*"(`filter_data.py`/`generate_dataset.py`)。
+> - caveat:训练分布内对(记忆+泛化混合),但 win-rate 非 100%+最难抗灌水方向是渐变=真学到;真泛化仍看 step-25 val 新 rollout。**结论:放松 length 赌注成立,可继续 RL。**
+>
+> **2) ⭐ length bonus 建议 0.3→0.1**(数据驱动)
+> - RM 自身强奖励 richness(density+0.50)+94% 偏好丰富>短 → **塌短风险低,不需大 length 保险**;v6.3/v6.5 length 不动是**旧 RM 不奖励 richness**,现在主推力是 RM 本身。
+> - length bonus 单调随字数(1500 饱和)推的是"纯长度",而 RM 有 21% 抗灌水盲区(79%≠100%)→ **bonus 越大越放大这盲区**。留 **0.1 当早期防塌短地板**,看 step-25 val 长度若靠 RM 健康涨 → 下轮可 0.0。
+>
+> **3) ⭐ 不加单独"动作/独白"奖励**(用户问题)
+> - 已三层覆盖:①数据生成硬门槛(必须 *动作*) ②RM 已奖励(高分组动作 2.5×) ③reward 链格式门(`length_shaping` 要 RP 格式、`anti_refusal`/`anti_ooc` 查 *动作*/"对话"/(内心),没结构归零)。
+> - **新增"数动作标记→给分"=本项目踩过的可 hack 反模式**(同被 hack 的 length 奖励):actor 会刷 `*做某事*`/`（）` 骗分。**要加强走 RM**(加动作/独白丰富的偏好对)或**二元格式门**(至少1动作否则罚),**不要渐变在环奖励**。
+>
+> **下一步**:改 `length_shaping_reward.py` 默认 + `launch_rl_v6.6.sh` 的 `LENGTH_SHAPE_COEF` 0.3→0.1 → 从带 conda 的 shell 重起 RL(别从 cron)→ step-25 看 val 长度/reward 升且不灌水。merged RM 已验证可服务。
+>
+> ---
+>
+> **🔻 以下为历史 — 2026-06-09 by Claude — RM v6.6 细腻度数据已造好（48798 行，可直接重训）+ 决定性诊断：语义细腻度流失在 defense-SFT，不是 GRPO。下面 2026-06-08 段起为历史。**
+>
+> ### 🎯 一页交接：RM v6.6 重训（提升 clean 语义细腻度 / 细粒度）
+>
+> **1) 决定性诊断（两版 1400-回合 eval，DeepSeek v6.3-rubric 盲评 A/B）**
+> - base-vs-RL(step425) 与 base-vs-defense-SFT 两套 eval：**SFT ≈ RL 全轴**（长度 en 1328/1333、beats 4.2/4.2、RM −0.07/−0.07）。**GRPO 425 步对长度/beats/RM 零移动** → 细腻度（base 5.6 beats→4.2、长度降到 base 的 ~78%）是在 **defense-SFT 蒸馏阶段丢的**，GRPO 只是原样保留。
+> - **base 独立细腻度胜率：vs RL 79.9%、vs SFT 80.6%**（5 语言 75–89%；richness margin +0.44）。judge 显式忽略长度 + 按长度归一 density → **剔除长度后仍 ~80% = 真质量，不是 RM 长度偏置**（corr(len,rm)≈0.2）。**推翻"RM 只是偏好长"的旧担心**。
+>
+> **2) 已造数据（可直接重训）**
+> - `data/openrlhf_rm/rm_train_v6.6_fg_combined.jsonl` = v6.3 40551 + **2749 新对 × weight 3 = 8247**，共 **48798 行（16.9% 新）**。
+> - 新对：**80% base 赢 / 20% challenger 赢**（280 RL + 270 SFT 作诚实反例，防 RM 学成"一律偏 base/偏长"）；**95% winner-is-richer**；长度 cap 2.2×。
+> - 链路（全 TDD，19 tests，`GRPO_Training_Package/rm_v6_finegrained/`）：`eval_pairs_to_candidates.py` → 复用 `judge_candidates_llm_openai.py`(v6.3 rubric, 2 候选) → `judged_to_rm_pairs_v65.py` → `build_rm_v66_mix.py`。中间产物 `data/runs/rm_v6_5_from_eval/`。**只用自洽 scored.jsonl，未碰源头数据。**
+>
+> **3) 重训怎么跑（GPU）**：照 v6.3 RM 训练配置（见 `training_runbooks`），数据换成 `rm_train_v6.6_fg_combined.jsonl` → 产物 RM v6.6。
+>
+> **4) ⚠️ 重训后强制护栏**：重测 **corr(len, rm_score)**。现 ~0.2；若明显升高 = 长度漏入（cap 没拦住）→ 回筛 / 上第 2 个 judge 交叉验证（现标签几乎全 high，temp0 偏自信）。
+>
+> **5) ⭐ SFT 重训 vs 直接靠 RM（用户问题）→ 先试 RM，SFT 修复留后手**
+> - **先试 RM-only（推荐、便宜）**：用 RM v6.6 + **松/单边长度惩罚**，从 SFT init 起 GRPO，前 50–100 步盯 beats/length。**理由：v6.5 零移动是因为 (a) 冻结 RM 饱和=无梯度 + (b) 长度惩罚反向拉；v6.6 把两个都修了**（RM 去饱和 = 有向"更细腻"的活梯度 + 松惩罚 = 去掉向下力）→ 这次 GRPO 有理由变长变细。
+> - **回退：修 defense-SFT（根因）**：仅当上面 probe 仍 stall 时。重生 teacher 数据加细腻度/长度下限，但**必须保住 roledrop 防御**（defense-SFT 的初衷）→ 更重、风险更高，留后手。
+> - **别只松长度惩罚**：GRPO 本就 length-neutral，terse SFT prior 才是锚，单松惩罚无效。
+>
+> **6) ⭐⭐ 已落地（2026-06-09 by Claude）：RL v6.6 三件套已备好 + Codex 02:00 自动起训**
+> - **RM 训练已在跑**：tmux `rm_v6_6_train_7gpu_no1`，run=`saves/gemma4-26b-a4b/chatjoy_rm_gemma4_sft_v6.6_fg_7gpu_no1_20260609_130240`（7 卡排除 GPU1，14:50 时 12%，ETA ~01:10 完成）。
+> - **(1) RM→vLLM merge**：`GRPO_Training_Package/merge_gemma4_rm_lora_v6_6_for_vllm.py`（参数化、scaling 从 adapter_config 读=256/128=2、base=`sft2_defense_merged_full`、out=`chatjoy_rm_v6.6_fg_7gpu_merged_vllm`；TDD 5 tests）。
+> - **(2) RL 启动**：`framework_bridge/verl/patches/launch_rl_v6.6.sh`。**关键发现：GSPO 早已是默认**（`train_grpo_lora_actor_verl.sh` 的 `policy_loss.loss_mode=gspo`+`seq-mean-token-mean`）。本轮只改两处：RM→v6.6 merged + **显式 length bonus 1.0→0.3**（`length_shaping_reward.py` 默认已改 + launch `LENGTH_SHAPE_COEF=0.3`，TDD 3 tests；4 道防 hacking 门不变）。actor 仍=`rl_v6.4_step160_merged`，SAVE_DIR=`saves/verl/v6.6_full`，session=`rl_full_v66`。设 0.0 可纯靠 RM。
+> - **(3) Codex 定时自动任务**：编排脚本 `framework_bridge/verl/patches/auto_merge_rm_and_launch_rl_v6.6.sh`（等 RM 完成→选 adapter→merge→**GPU0-7 空闲安全闸,绝不杀进程**→起 RL；幂等；`DRY_RUN=1` 已验证 done/not-done/GPU-gate 三分支）；prompt=`CODEX_TASK_auto_rl_v6.6_0610_0200.md`（`at 02:00 2026-06-10` 触发）。
+> - 全套 `pytest tests/` 42 passed。**护栏不变**：RL 跑到 step25(TEST_FREQ) 看 val 长度/reward 是否升且不灌水;RM 重训后仍要测 corr(len,rm)~0.2。
+>
+> **7) ⭐⭐ 收尾核查（2026-06-09 晚 by Claude）：cron 已上 + 修了半成品起训 bug + GPU1 显存定死**
+> - **cron 已生效**（root 的 crontab，cron 守护在跑）：`0 2 10 6 *  [ "$(date +%Y)"=2026 ] && bash auto_merge_rm_and_launch_rl_v6.6.sh >> /tmp/auto_rl_v6.6.cron.log`。year-guard 补 cron 没年份字段;root 能看到 root 起的训练 tmux/进程。
+> - **🐛已修(半成品起训风险)**：`rm_training_done()` 原把 `_ckpt/global_step*_hf` 当完成信号——但它训练中途每 50 步就有(现 step150~350_hf 都在),tmux 若崩会误判"完成"→在半成品 RM 上起 RL。**改成只认最终 top-level `adapter_model.safetensors`**(只在干净收尾写,v6.3 验证)。训练崩→无最终 adapter→判未完成→超时 abort 告警,绝不半成品起训。已 dry-run 复验。
+> - **GPU1 OOM 已定死安全**：本机 GPU1 有 **~7.4GB 常驻(非本训练,RM 训练排除了 GPU1)**,02:00 大概率还在;RL 时 RM(TP=4)落物理 GPU0-3 含 GPU1。合并 RM≈49GB bf16→每卡仅 **12.0GB 权重**。把 `launch_rl_v6.6.sh` 的 `RM_GPU_MEM_UTIL` **0.62→0.58**(注入 `RM_GPU_MEMORY_UTILIZATION`)。**双保险**:①安全闸卡 GPU1≤8GB 才放行 ②RM 封顶 0.58×31.8=18.5GB → GPU1 最坏 8+18.5=26.3<31.8GB(余 5.6GB),且 vLLM 显存 init 后固定不长(`enforce_eager`+KV 预分配+`free_cache_engine=False`)。
+> - **质量零影响**:`gpu_memory_utilization` 只定 KV cache/并发,**不改 reward 分数**(确定性前向+pooling,逐位相同);不改截断(由 `max_model_len` 管)、reward loop `timeout=None` 排队不丢 → 梯度/奖励信号与 0.62 完全一致,仅吞吐略降。**不要再往下调**(没必要)。
+>
+> ---
+>
+> **🔻 以下为历史 — 2026-06-08 by Claude — v6.5 停训+425 merge+起服务+磁盘审计。下面 2026-06-05 段是上一层历史。**
 >
 > ### 🚀 v6.5-425 已 merge + 起 vLLM（产品 A/B）+ 磁盘审计（2026-06-08 晚）
 > - **停训**：v6.5 已停（tmux `rl_full_v65` kill + ray stop）。**keep=2 其实生效了**（下文 line 误写"没生效"=误判）：只有 **`global_step_420` / `425` 有权重（各 50G）**，其余 83 个 `global_step_*` 都是 12K 的 `data.pt` 占位、不是 ckpt。

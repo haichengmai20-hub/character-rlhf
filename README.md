@@ -24,7 +24,17 @@
 - **数据 / 算法 / 算力 三者互相约束**：算力（5090 无 P2P、MoE 显存）决定能用什么算法（ZeRO-2 + 4-bit、GSPO）；数据归因（RM 退步、指标盲区）决定下一步重训还是改信号。
 - **统计视角的数据敏感度**：方差/区分度当一等公民（`reward_std≥2.0`）、分组读根因、**两次识破"指标在骗自己"**（Goodhart）→ 据此把"再 RL"改成"修数据/换信号"。
 
-👉 **完整复盘（七个归因循环 + RM 六版数据与指标 + 在线 RL reward 与趋势）见 [CASE_STUDY.md](CASE_STUDY.md)。** 下方"核心工程亮点"是它的索引式摘要。
+👉 **完整复盘（七个归因循环）见 [CASE_STUDY.md](CASE_STUDY.md)。** 下方"核心工程亮点"是索引式摘要。
+
+---
+
+## 📚 三大能力深读（deep_dives/，本仓库主菜）
+
+| # | 深读 | 一句话 | 代表性内容 |
+|---|---|---|---|
+| 1 | [显存算账与 GPU 通信](deep_dives/01_memory_accounting_and_gpu_communication.md) | 在 8×5090（无 NVLink/P2P、31.36GB/卡）上为 26B/30B MoE **把每一 GB 显存和每条通信路径算清楚** | ZeRO 1/2/3 显存×通信量账（all-gather/reduce-scatter 原语级）· NUMA/QPI 拓扑约束 · verl colocate 的 param_offload 两张账表（0.09GB vs 12.2GB 余量）· vLLM cumem **虚拟地址预留**语义 + 三档 mem-util 复测（三个值三种死法，每个都能用加法解释）· FSDP merge 51.7GB 不可行性证明 · update_weights 串行换防重排 |
+| 2 | [RM 数据构造、训练与奖励 + 归因](deep_dives/02_rm_data_reward_and_attribution.md) | 偏好数据怎么造、RM 怎么训、最终 reward 怎么设计，**每次进退都归因到具体根因** | 三类单因负样本（DOE 思路）+ 门控 + sample_weight · Bradley-Terry 与三个训练敏感点 · 六版台账（94.5→86.4→86.0→95.5）：batch 方差/cosine 周期/缺陷样本逐个归因 · score head 两阶段凸优化恢复 · v6.3 三杠杆（第 6 candidate/roledrop pair/8 维 rubric）+ 统计验收门 · **奖励反向训练破角的发现与修复**（Goodhart 实例，误报 1/16→0/16）|
+| 3 | [RL 动力学：参数、趋势与策略应对](deep_dives/03_rl_dynamics_params_and_strategy.md) | 每个 RL 参数的**算法原理依据** + 动态指标看板 + 六个"趋势→归因→应对"实战 | GRPO 组内优势/GSPO 序列级比率（为何配 MoE+标量 RM）/DAPO 非对称 clip/per-source KL/熵正则原理 · bonus 按 σ 标定、SAVE_FREQ 按崩溃间隔定、LR constant vs cosine 的选择逻辑 · psKL 平台期 val 序列与多杠杆响应 · grad_norm 尖峰解读 · v6.5 375 步零移动双重归因 · **base 27% < v2 55% < v1 91%** → 停 RL 转 defense-SFT 的决策链 |
 
 ---
 
@@ -93,9 +103,15 @@ ChatJoy 的目标不是通用问答，而是**多语言角色扮演陪伴对话*
 ```
 chatjoy-character-rlhf/
 ├── README.md                    本文件
+├── CASE_STUDY.md                ⭐ 闭环叙事：7 个归因循环（业务→数据→训练→归因→再迭代）
 ├── DATA.md                      ⭐ 完整数据/模型分层清单（哪些入库、哪些只记录）
 │
-├── docs/                        工程知识库（项目全程记录，面试主菜）
+├── deep_dives/                  ⭐⭐ 三大能力深读（本仓库主菜）
+│   ├── 01_memory_accounting_and_gpu_communication.md   显存算账 × ZeRO × 通信原语 × vLLM/cumem
+│   ├── 02_rm_data_reward_and_attribution.md            RM 数据构造/训练/奖励设计 × 数据归因
+│   └── 03_rl_dynamics_params_and_strategy.md           RL 参数原理 × 动态趋势观察 × 策略应对
+│
+├── docs/                        工程知识库（项目全程原始记录）
 │   ├── project_chatjoy_overview.md       全链路总纲 + RM/GRPO 全记录 + 当前状态
 │   ├── training_runbooks.md              各阶段可直接运行的启动命令/超参/路径
 │   ├── chatjoy_business_ux_tech_mapping.md  8 维业务体验 → 技术手段映射
