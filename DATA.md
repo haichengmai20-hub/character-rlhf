@@ -76,6 +76,37 @@
 
 `evaluation_report_jsonl*.csv`（baseline / dpo / v1_gemini / v6_gemini_cot 等，最大 ~5 MB）、`logs/`、`outputs/`、`plots/`、`confusion_matrix.png`、`consensus_moe_report.csv`。评测脚本 ✅ 入库（`training/data_prep/` 的 `analyze_*.py`、`evaluate*.py`）。
 
+## §6. v6.6b–v6.10 富化/防御轮（T2/T3 — 数据仅记录，脚本与报告 ✅ 入库）
+
+> 这一轮的主线是「先用 SFT 把 clean 的文笔丰富度逼近 base teacher，再单独开一道门决定是否进 RL 防御」。脚本、probe 报告、RM 打分小产物均已入库；只有大数据集与合并模型仅记录。
+
+**数据集（T2 — 仅记录，源目录 `/root/rich_cjk_sft_v6{7,8,9}/`）**
+
+| 文件 | 大小 | 说明 |
+|---|---|---|
+| `rich_cjk_sft_mix_v69_balanced.json` | 29,927 条 | v6.9 均衡 mix（en 12% + defense 10.2% 760×4 oversample + 格式 100%）；✅ 3 条样本入库 `data/samples/sft_v69_balanced_mix_sample3.json`（含 `richness_score` 字段） |
+| `rich_cjk_sft_mix_v69_final.json` | 24,518 条 | v6.9 best-of-N 选择器产物（动作+interaction/sensory/emotional 排序，独白不入目标防过冲） |
+| `rich_v69_judged_only.jsonl` / `candidates_judged_only.jsonl` | — | judge 已打分的候选池（复用优先，零新增 judge） |
+| `bon_candidates_{zh_zhtw,ja_ko}.jsonl` | — | base 重采 N=8–10 的 best-of-N 候选 |
+
+**脚本与报告（✅ 已入库）**
+
+- `training/sft_richness/` — `select_v69_balanced.py`（均衡选择器）、`bon_resample_v69.py`（best-of-N 重采）、`validate_gate_v68.py`（训练前 profile 硬门）、`run_v69_balanced_autoresume.sh`（remount shm + resume_from_checkpoint 自恢复 wrapper）
+- `training/sft_richness/probe_analysis/` — step0/step100/base/v68 三轴 held-out probe + 温度甜点扫（t0.8/0.85/0.9/1.0）+ 多样性分析 + RM 分语言打分脚本；**关键产物 `rm_scores.jsonl` / `rm_scores_hot.jsonl`**：clean/attack 分轴打分证「RM 是防御判别器，clean 质量轴几乎是平的」（clean 跨度 0.037 vs attack 跨度 0.36，差 ~10 倍）
+- `reports/sft_richness/` — v6.8 三份 probe 报告（heldout / rich_opening / 综合）+ CODEX 任务卡，记录 v6.8 失败归因（独白过冲 187%/对话回退/动作没动 → 弃用，重做 v6.9）
+
+**合并模型（T3 — 仅记录，~49–52 GB/个）**
+
+| 模型 | 大小 | 说明 |
+|---|---|---|
+| `sft_rich_cjk_v67_repair_merged_full` | 49 GB | v6.7 repair 后 actor（CJK 出厂均长 488 字、语言 55/55、破功 5/34） |
+| `sft_rich_cjk_v68_ffn_merged_full` | 52 GB | v6.8 FFN/router LoRA 合并（已弃用，留作 A/B 对照） |
+| `rl_v67_step100_merged` | 49 GB | v6.7 RL step100 合并（防御 +0.092 有效，clean 全平 = RM 无梯度） |
+
+> 验证策略（零 merge 筛选）：训完后 vLLM `--enable-lora` 直挂 adapter 筛 ckpt，只对赢家做 merge（merge ~49 GB 仅做一次）。
+
+**评测/周报（✅ 入库 `reports/`）**：`周报-2026-06-12.md`（含 Hermes 迁移 + RL v6.7 判停过程）、`AB对比三方_v2_20260605.md`、`attack_dict_proposal_for_product.md`（防御攻击词典提案）、`chatjoy_rl_vs_base_probe.md`、`response_test.md`。基准对照 `benchmarks/RMTBENCH/`（Claude 4.5/Claude judge 中英文打分）。
+
 ---
 
 ## 如何复现（高层）

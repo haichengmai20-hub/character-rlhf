@@ -13,6 +13,44 @@ originSessionId: faabf23f-85fa-49c2-a93b-34bb65883354
 
 ---
 
+### 当前状态 (2026-06-16) — v6.9 balanced SFT 待重训(v6.8 已失败)
+
+> 最新快照。详见 handoff `chatjoy_rm_v6_3_roledrop_handoff.md` 顶部 06-16 三条 banner + spec `chatjoy_sft_v69_clean_richness_design.md`。下方 06-15 v6.8 段起为历史。
+
+**1. v6.8 SFT-max 已执行并失败**:有效 probe 证 step0 本就 ≈base(动作 90%/对话 103%/独白 104%);v6.8 反而独白过冲 187%base、对话回退、动作没动。弃用。
+
+**2. v6.9 = 重做(当前活跃)**:从 step0 长训,best-of-N 富化 clean + 守 attack。关键纠错/事实:
+- **base 真实动作(8192 主链路,勿含 ctx7500 残留)= zh5.63/zh-tw4.51/ja3.64/ko3.71**;ja 动作天花板 ~4.0,4.5 门够不到 → 改 per-lang ≥base。
+- **方法**:合并 base_8192 + 中性重采池(prompt_id 对齐 6104/6104,~8.5候选/场景=真 best-of-N)、选择器主排序"动作+对话"、per-lang ≥base 门 → profile 4 语言全 PASS。
+- **抓修两个致命问题**:① mix-builder 丢了 system/history(98.7% 空 prompt)→ 按 prompt_id join 回源恢复;② 原 mix 偏斜(98.7%CJK/1.3%defense/0 en)→ 重建 **balanced**(`rich_cjk_sft_mix_v69_balanced`,29927:en12%+defense10.2% oversample)防多语言+attack 回落。
+- **OOM 真因 = CE over 262k 词表**(O(seq×vocab) 线性,**非注意力**)→ cutoff 6144→4096(截断仅4.9%/0%砍output);flash/sdpa/Liger 都不解(Liger 不支持 gemma4)。
+- **重训配置**:1 epoch / cutoff 4096 / autoresume wrapper(remount shm + resume_from_checkpoint)。**验收=全部训完才 probe 最终 ckpt,三轴 vs step0**(CJK 富度 + en 不退 + attack **破功率≤step0@t0.9**/5zh不破)。**🔧纠错(2026-06-16):旧"RM≥0.318"的 0.318 是 clean+attack 混合分,非纯 attack;纯 attack-split≈0.27(温度脆)→ 护栏改破功率为主、RM 为辅。** defense 够不够 + **是否进 RL(独立一道门)**由 §6 RL 入口门判(t0.9 破功率),不够再生成 A1-A4。
+
+**3. RL v6.10 已设计但 parked**:`/dev/shm` 64M 致 NCCL FSDP 必崩(已运行时 remount 2G 修复,非持久);等 v6.9 SFT 出产品候选后再起。reward 改动(attack 非 break 时加 λ·clean_q)pytest 145 passed。
+
+---
+
+### 当前状态 (2026-06-15) — v6.7 RL 已停，转 v6.8 SFT-max 推 clean 丰富度
+
+> 最新快照。下方 2026-06-08 及更早全部保留为历史。**当前模型现实**(覆盖文件头 line 11 的旧 Qwen 说法):RM/actor 现都是 **Gemma4-26B-A4B MoE**(128 专家/30 层);RM = `chatjoy_rm_v6.6_fg_7gpu_merged_vllm`;actor 谱系 = base Gemma4-it → SFT(rich-CJK v67)→ RL v6.x。详见 handoff `chatjoy_rm_v6_3_roledrop_handoff.md` 顶部 06-15 三条 banner + spec `chatjoy_sft_v68_clean_richness_design.md`。
+
+**1. v6.7 RL 已停在 step100**:clean val 100 步全平(+0.037≈噪声),防御 +0.092 真有效。判停符合预期。
+
+**2. 三个被数据钉死的战略结论(本阶段总钥匙):**
+- **多样性 = 免费,靠推理温度**:temp 0.7→0.9 开场集中度 -9.4%、Jaccard -33%,RM 不降反升。**产品操作点定 t≈0.9**(top_p 0.95 / presence 0.4)。"模板化是 SFT/选择病"已推翻——是低温 mode collapse,训练数据本就多样(精英富女 64 样本 57 个不同开场)。
+- **RM 是「防御判别器」,clean 质量轴几乎平**(clean 跨度 0.037 vs attack 0.36,差 ~10 倍)。⇒ **RL 对 clean 丰富度结构性无能**(无梯度);**RL 防御不耐高温**(温度脆方向成立)。⚠️**纠错(2026-06-16):旧写的 "step100@t0.9 0.295 < step0@t0.9 0.318" 轴不对齐**——0.318 是 step0 clean+attack 混合分,非纯 attack;step0 纯 attack-split t0.7=0.293→t1.0=0.254,RL v6.7 仅把 t0.7 推到 0.305(+0.013)。结论方向不变(RL 增益边际+温度脆),但勿引用 0.318 当 attack 数。
+- **语义丰富度只能靠 SFT 蒸馏 teacher**(base Gemma4 是天花板),当前 SFT 丢了 teacher ~20% 丰富度(动作块 4.7→3.4)。
+
+**3. 当前工作 = v6.8 SFT-max(让 clean 在动作/对话/独白/语言质量逼近 base teacher):**
+- 选样:防御 RM argmax → **丰富度选样**(DeepSeek judge 三轴 + proxy 备档);judge 实测 action/monologue 有区分度、**language_quality 几乎平**(std 0.11,和 RM 同病)。
+- **LoRA 扩到 FFN**:现仅 q,k,v,o → A/B 加 `mlp.{gate,up,down}_proj + router.proj`(融合专家张量 PEFT 不可 LoRA,不碰)。
+- **针对性小重采**已完成(17664 条,temp0.9):本语言内心独白 0%→71%(括号心理),英文 Thoughts 尾巴维持 5% 未涨;但对话仍 2.2 没补上(靠选样捞)。
+- **底座两档**:Track B(便宜先跑)= 在 step0(`sft_rich_cjk_v67_repair_merged_full`)上小补训,防御白捡;Track A(高上限)= base 全新训,B 不够再上。
+- **rich:replay = 1:1**;重采走 proxy。**RL 显式推迟**到本版 probe 达标后再设计(届时专攻温度鲁棒防御)。
+- 已知待修:build 脚本 judge(0-1)与 proxy(0-10)量纲混用,重采会无条件压过 judge 候选,合池前需归一化。
+
+---
+
 ### 当前状态 (2026-06-08) — RL 已到顶，战略拐点：转"修数据/信号"
 
 > 本节是最新状态快照（2026-06-08）。下方"最新状态摘要 (2026-05-07)"及更早记录全部保留为历史。当前结论：**纯 RL 调参已到天花板，下一步不是再 RL，而是定向修数据与奖励信号。**

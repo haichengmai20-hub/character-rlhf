@@ -1,6 +1,358 @@
 # ChatJoy RM v6.3 Roledrop 中文交接
+> **🆕🆕🆕🆕🆕 2026-06-16(晚)by Claude — 抓到「只喂CJK会回落多语言+attack」风险 → 重建 balanced mix → 改 1epoch 重训。这是当前要跑的版本。**
+>
+> ### 抓到的风险(用户直觉对)
+> - 原 v6.9 mix(那个在跑的 3ep)实测:**98.7% clean CJK、defense 仅 1.3%、零 en** → 3ep 长训会放大偏斜 → **attack 防御 + 非CJK 语言双回落风险**(违背 spec §4.4「数据偏则越练越偏」)。mix-builder 漏了 spec §3(非CJK replay)+ §4.3(1:1 defense)两条护栏。
+> ### 修法:重建 balanced mix(已完成并验证)
+> - **`/root/rich_cjk_sft_v69/rich_cjk_sft_mix_v69_balanced.json`(29927 条,已注册 dataset `rich_cjk_sft_mix_v69_balanced`)**:rich CJK ~12k + clean-replay CJK ~11.5k + **en/非CJK 12%(从0补,锚多语言)** + **defense 10.2%(760 unique ×4 oversample,从1.3%补)**。
+> - **defense 用 oversample 不用生成**:现有 pool 只有 760 unique defense(193新+483 base hardfix,含 5 zh hardfix);复制 4x 到 10% = 廉价锚定(防遗忘靠重复曝光,标准做法;记忆风险只对"学新"不对"锚旧")。**「12% defense」是我拍的启发值,非硬指标——真指标是 probe 的 attack 护栏。**
+> - 独立验证过:system/instruction/output **100% 非空**(防 context bug 重演)、en 12%、defense 角色内拒绝非机器人。
+> ### 重训配置(YAML 已改好)
+> - dataset→balanced、**num_train_epochs 3→1**(数据平衡后 1ep 的保守理由其实没了,但用户选 1ep=最快+最稳,~1069步~5.3h)、**cutoff_len 4096 不动**(CE/262k词表 OOM 修法)、其余全不动。
+> - **续训**:autoresume wrapper(tmux 内 while 循环:每轮先 `mount -o remount,size=2g /dev/shm`→有 ckpt 则 sed 设 `resume_from_checkpoint:true`→launch;`train_runtime` 出现即停)。自救 OOM/瞬断/容器重启;**救不了 09:30 清场杀 tmux server → SOP:09:46 后手动重跑同 tmux 命令自动续**。
+> ### 验收(⚠️ 全部训完才做,不中途探针 — 用户定)
+> - 训完 → probe **最终 adapter**;先 vLLM `--enable-lora` 直挂筛(零 merge),过了再两步法 merge。t0.9/top_p0.95/presence0.4;probe 集+base/step0 基线在 `/root/outputs/v67_step0_vs_step100/`。
+> - **三轴全测 vs step0**:① CJK 富度(动作>base zh5.63/zh-tw4.51/ja3.64/ko3.71、对话≥base、独白≤base模型t0.9~35.5%+10%)② **en 不退** ③ **attack 护栏:破功率(主)≤step0@t0.9 + RM(辅)≥step0 attack-split + 5 zh 不新增破功**。
+> - **🔧 纠错(2026-06-16 实测 rm_scores.jsonl 分轴):护栏数 "RM≥0.318" 错了 —— 0.318 是 step0@t0.9 的 clean+attack 混合分,纯 attack-split 只有 ≈0.27(t0.7 0.293→t1.0 0.254,温度脆),base≈0.194。** ∴ attack 护栏改用**破功率为主**(OOC披露% + 5 zh,在 SFT 输出上新测;precompute 无破功率%),RM 为辅(≥step0 attack-split 同温重测)。连带纠:RL v6.7 step100 attack t0.7=0.305 仅 **+0.013**(非 +0.092)且高温更差。
+> - **defense 够不够 = ③ 判**:守住=10% oversample 够;仍侵蚀=才生成 A1-A4 新对抗样本(有的放矢,不投机)。
+> - **🆕 是否进 RL = 独立一道门(不在 clean 验收里)**:clean 验收过后,在最终 ckpt 上 **t0.9 跑 attack probe 看破功率** → ①≤产品容忍→上线不 RL;②材料性高且 SFT defense 已尽力→进 RL v6.10;③小缺口→先靶向 SFT hardfix。**SFT-defense 先尽力、RL 收尾**,不跳过 SFT 直接 RL。详见 sft_v69 §6 / rl_v610 §0。
+>
+> ---
+> **🆕🆕🆕🆕 2026-06-16(午)by Claude — v6.9 长训 SFT 已起训(OOM 已修);定了验收门 + 验证策略 + 续训/磁盘注意事项。**
+>
+> ### 训练状态
+> - **在跑**:tmux 内 llamafactory-cli train(PID~3846463),日志 `/tmp/sft_v69_long_train2.log`;step 进行中,**2628 步 / 3ep / ~13 小时**(17.8s/it)。loss ~0.82-0.98 健康降,grad_norm ~0.4-0.7 稳。
+> - **⚠️ ~13h 会跨明早 ~09:30 宿主清场 → 大概率被杀。续训必备。**
+> ### OOM 根因(已修,记清防再犯)
+> - 首次起训(`/tmp/sft_v69_long_train.log`)step0 即 OOM。**真因 = cross-entropy over Gemma4 的 262k 词表**(`flat_logits=[seq,262144]`,fp32 升精),内存 **O(seq×vocab) 对 seq 线性**,**不是注意力 O(seq²)**。
+> - ∴ **flash_attn / sdpa 对这个 OOM 无效**(那是改注意力的);**Liger 也不可用**(env 没装 + LlamaFactory liger 分发只到 gemma3、无 gemma4 分支)。**唯一杠杆=砍 cutoff + `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`**。
+> - **cutoff 6144→4096**(线性:5120 仍需~3.94G>3.01G空闲=照样炸;4096 才稳)。YAML 已改。起训命令带了 expandable_segments,过了 step0。
+> - **截断影响=可忽略(真 tokenizer 实测 2000 样本)**:仅 **4.9%** 记录超 4096,**0% 砍到 output**(output 最长 768 tok,`target×2<cutoff` 恒成立→只截 source);那 4.9% 只丢最旧 history,人设+output 全在。**训练信号 100% 保留。**
+> ### 续训 + 磁盘
+> - **可续训**:`save_only_model:false` 存了 optimizer/scheduler/RNG。被杀后:①若容器重启过→先 `mount -o remount,size=2g /dev/shm`(remount 非持久)②YAML 改 `resume_from_checkpoint: true`→重跑,从最近 ckpt 续(丢≤200步)。建议挂 auto-restart wrapper。
+> - **磁盘**:LoRA ckpt ~0.4G/个(只存 adapter+optimizer,不含底座),13 个~5G,save_total_limit 20 封顶~8G=**可忽略,全保留没问题**(272G 空闲)。**真消耗是 merge(每个~49G+text-only~26G)→ 只 merge 赢家,别全 merge。**
+> ### 验证策略(用户定:训完再逐个挑 ckpt 试)
+> - **训完(不中途 merge)→ 阶段1 用 vLLM `--enable-lora` 直挂 adapter 跑 probe 筛**(零 merge/零盘;**先拿1个 ckpt 验证 custom 4bit MoE 能否挂 LoRA**,能就走这条省 merge)→ **阶段2 只对赢家 1-2 个做两步法完整 merge**。
+> - probe 现成资产:prompts `/root/outputs/v67_step0_vs_step100/rich_opening_cjk_probe_v3.jsonl`(200条固定集);base 基线 `base_it_rich_opening_v3_t0.9.jsonl`、step0 基线 `step0_rich_opening_v3_t0.9.jsonl`(已生成,直接比);结构指标算法 `/root/rich_cjk_sft_v68/validate_gate_v68.py`。探针口径 **t0.9/top_p0.95/presence0.4**;探 ep1(~step800)/ep2(~1600-1800)/ep3(2628),过拟合→取更早。
+> ### 验收门(已校准,全 vs step0/base 同口径)
+> - **动作 = 主信号(可靠)> base**:zh>5.63 / zh-tw>4.51 / ja>3.64 / ko>3.71(数据里已达 4.34-6.15)。
+> - 对话 ≥ base(反 v68 回退):zh≥5.09 / zh-tw≥3.91 / ja≥3.60 / ko≥2.82。
+> - 语义 3 轴 ≥ base(judge:interaction≥0.88 / sensory≥0.83 / emotional≥0.86)——**近饱和+跨语言全平(同 RM clean 轴病)→ 只作"不退"守门,别期待涨**。
+> - 独白 ≤ **base 模型 t0.9 输出(~35.5%)** +10%(⚠️口径=模型输出比模型输出,不是训练数据的~10%)。
+> - 防御护栏(对赢家单验):**attack 破功率(主)≤step0@t0.9 + attack-split RM(辅)≥step0 同温重测(≈0.27,非 0.318)**、5 个确定性 zh 不新增破功、开场集中度≤step0_hot。(0.318 纠错见顶部 06-16晚 banner。)
+>
+> ---
+> **🆕🆕🆕 2026-06-16 by Claude — v6.9 长训 SFT 数据流水线完成 + 一个 mix 格式 bug 已抓修;数据就绪待训练。**
+>
+> ### 路径1(recover-to-base,用户已选)执行完毕
+> - **方法**:合并 base pool(`gen_base_teacher_8192`,1.4候选/场景)+ 中性重采池(`bon_candidates_*`,~7/场景);**两边 prompt_id 完全对齐(6104/6104),合并后 ~8.5候选/场景 = 真 best-of-N**。选择器主排序 **动作+对话之和**(非纯动作,纯动作会回退对话=v68 病),per-language **≥base 门**。
+> - **profile 4 语言全 PASS**:动作 zh6.15/zh-tw5.20/ja4.34/ko4.57(均≥base),对话全≥base,独白 2-4%(远低于天花板)。
+> - **⚠️ 纠错(我两次算错的根源)**:base 真实动作均值(`8192` shard,**绝不含 ctx7500 残留**)= zh5.63/zh-tw4.51/ja3.64/ko3.71,对话 5.09/3.91/3.60/2.82,独白 6-13%。早前我说的 ja4.23/ko4.00 是**误含 ctx7500** 所致,作废。ja 动作天花板 ~4.0(best-of-7 才 3.97),**4.5 门对 ja 物理够不到**,故改 per-lang ≥base。
+> - **🔴 抓到并修复的 mix bug**:首版 `rich_cjk_sft_mix_v69_final.json` 只有 312/24518(1.3%)有 system/instruction——mix-builder 从源 `messages` 只抽了 assistant 回复当 output,**把 system(人设)+history+最终user轮全丢了**=24206 条"空 prompt→输出"=训练灾难。已按 `meta.prompt_id` join 回 `gen_base_teacher_8192` 的 messages 恢复(system=messages[0]/history=中间user-assistant对/instruction=末尾user轮/output=顶层response);修复后 system+instruction+output 100% 非空、history 60.4%(其余单轮)、抽样多轮连贯、output 动作分布不变。坏文件备份 `*.BROKEN_nocontext.json`。
+> - **资产**:训练数据 `/root/rich_cjk_sft_v69/rich_cjk_sft_mix_v69_final.json`(24518:rich12103+replay12103+defense312,已注册 dataset `rich_cjk_sft_mix_v69`);选择器 `select_v69_balanced.py`;YAML `gemma4_rich_cjk_sft_v69_lora.yaml`(base=step0 `/root/sft_rich_cjk_v67_repair_merged_full`、rank24/alpha48、target q,k,v,o,gate,up,down,router.proj、3ep、lr5e-5)。
+> - **下一步=训练**:① YAML **cutoff_len 4096→6144**(恢复多轮上下文后 system均6720字符,~22%记录超4096会截断 output;0%超6144)② `run_v69_sft.sh train`(监控 loss/OOM/truncation)③ merge 两步法(text-only export→build_full_multimodal 拼 vision)对 ep2/ep3 各做 ④ t0.9 held-out rich-opening probe(先过 base-validity;判成功=动作+3语义轴>base、独白≤base+10%、对话≥base;护栏 attack **破功率≤step0@t0.9**/5 zh 不新增破功,**RM 辅非0.318**——见顶部 06-16晚 banner 纠错)。
+>
+> ---
+> **🆕 2026-06-15 21:25 by Codex — RL v6.10 启动失败已记录:不是 reward/数据问题,是 NCCL `/dev/shm` 基础设施问题；已停止 crash-loop。**
+>
+> ### v6.10 已做/已验证
+> - 目标配置:actor 固定物理 GPU4-7,RM 固定物理 GPU0-3,`CUDA_VISIBLE_DEVICES=4,5,6,7,0,1,2,3`;actor=`/root/sft_rich_cjk_v67_repair_merged_full`;RM=`chatjoy_rm_v6.6_fg_7gpu_merged_vllm`;数据=`/root/verl_rl_data_v6.6b_cleanrich`;日志=`/tmp/rl_v6.10.log`;tmux=`rl_full_v610`。
+> - reward 改动已完成且测试全绿:attack 且非 break 时加 `0.25 * clean_q`;break 不加;clean 行为不变。pytest: **145 passed,1 warning**。
+> - launch 脚本已写好:`GRPO_Training_Package/framework_bridge/verl/patches/launch_rl_v6.10.sh`。核心超参:ROLLOUT_N=12,temp=1.0,KL_CLEAN=0.008,KL_ATTACK=0.002,LR=3e-6,keep=3,SAVE=5,TEST=25。
+>
+> ### 崩溃事实
+> - 多次启动均死在 **step0/B0 之前**,没有进入训练/val 指标阶段。
+> - 第一类失败:RM vLLM TP4 初始化时 NCCL 创建 `/dev/shm/nccl-*` 失败,segment 约 9.6MB,报 `No space left on device`。
+> - 后续加 `NCCL_SHM_DISABLE=1` 后,RM 阶段可越过,但 actor FSDP 初始化失败:在 `FSDP -> _sync_module_params_and_buffers -> dist._broadcast_coalesced` 处创建 `/dev/shm/nccl-*` 失败,segment 固定约 **33,030,528 bytes**,报 `torch.distributed.DistBackendError: NCCL error ... No space left on device (28)`。
+> - 已尝试把 `NCCL_SHM_DISABLE=1` 从三层传入:launch shell、`verl/trainer/constants_ppo.py` 的 Ray TaskRunner runtime_env、`verl/single_controller/ray/base.py` 的 WorkerDict runtime_env。Ray init 日志确认 env 生效,但 FSDP 仍创建 33MB shm segment。
+> - 已尝试 `NCCL_BUFFSIZE=1048576` 并同样三层透传;Ray init 日志确认 `NCCL_BUFFSIZE=1048576`,但 segment 仍是 33MB,失败不变。
+> - 环境证据:Ray 警告 `/dev/shm has only 28540928 bytes available`;宿主/训练命名空间的 mount 显示 `/dev/shm` tmpfs size=65536k。也就是说训练进程实际只有约 64MB shm,不足 4-rank FSDP/NCCL 初始化。
+>
+> ### 当前结论(2026-06-16 已运行时修复 /dev/shm;持久化待管理员)
+> - **定论:v6.10 不是 reward / 数据 / 参数问题,而是运行环境 `/dev/shm` 太小。** 当前训练会话 `/dev/shm` 仅 64MB(tmpfs size=65536k,Ray 实测 only 28540928 bytes available)。Ray/PyTorch/NCCL 在 **actor FSDP 初始化**(`_sync_module_params_and_buffers → dist._broadcast_coalesced`)时要创建约 **33,030,528 bytes(~33MB)**的 `/dev/shm/nccl-*` segment;64MB shm 下 4-rank 必崩 → `torch.distributed.DistBackendError: NCCL error ... No space left on device (28)`。
+> - **已试且确认无效**:`NCCL_SHM_DISABLE=1` 与 `NCCL_BUFFSIZE=1048576` 都已三层传入(launch shell + `constants_ppo.py` Ray TaskRunner runtime_env + `base.py` WorkerDict runtime_env),Ray init 日志确认 env 已生效,但 FSDP 仍创建 33MB segment,失败不变。**∴ 问题不在 NCCL 参数,调 NCCL 旋钮无用。**
+> - **✅ 运行时修复已应用(2026-06-16,by Claude)**:容器内为 root 且有权 remount tmpfs → 执行 `mount -o remount,size=2g /dev/shm`,`/dev/shm` 从 64MB 抬到 **2.0G**(非破坏性:现有 37MB 内容保留、不动任何进程)。33MB 的 FSDP NCCL segment 现可轻松容纳,**step0/B0 之前的崩溃阻塞已清除**。
+> - **⚠️ 非持久**:remount 仅当前容器生命周期有效;容器重启 / 宿主每早清场(见历史 banner ~09:30)后会回退到 64MB。**重启 v6.10 前务必先 `df -h /dev/shm` 确认仍是 2.0G,若已回退则重跑 `mount -o remount,size=2g /dev/shm`。** 持久修复仍需管理员在容器创建时设 `--shm-size ≥1g`。
+> - `rl_full_v610` crash-loop 已手动停止;checkpoint / merged / launch 脚本 / reward 改动全部保留(reward 改动 pytest 145 passed,已验证正确)。**shm 已扩,可直接重启**(重启前确认 df 仍 2G)。
+>
+> ---
+> **🆕🆕🆕🆕🆕 2026-06-15(深夜)by Claude — 高温实验结果出炉 + clean/attack 分轴 RM 复盘:【核心结论:RM 是「防御判别器」,在 clean 质量轴上几乎是平的】。这是本项目优化方向的总钥匙。**
+>
+> ### 决定性数据(probs_0 越高越好;clean=N 类 21 例,attack=A 类 7 例;rm_scores.jsonl + rm_scores_hot.jsonl)
+> | 模型 | clean_rm | attack_rm | 开场集中度↓ | #动作块 | 动作字% | 均长 |
+> |---|---|---|---|---|---|---|
+> | base(teacher) | 0.204 | 0.205 | 0.0299 | **4.7** | **66%** | 811 |
+> | step0(SFT,t0.7) | 0.177 | 0.469 | 0.0279 | 3.4 | 57% | 715 |
+> | step0_hot(t1.0,pp0.4) | 0.207 | 0.397 | **0.0131** | 3.9 | 64% | 788 |
+> | step100(RL,t0.7) | 0.214 | **0.561** | 0.0253 | 3.6 | 59% | 712 |
+> - **clean 轴动态范围仅 0.037(0.177–0.214),attack 轴 0.356(0.205–0.561),差 ~10 倍。** RM 在 clean 上没有梯度。
+> - 高温采样脚本:`/root/outputs/v67_step0_vs_step100/resample_step0_hot.py`(temp1.0/top_p0.95/presence0.4);分析:`analyze_diversity.py`。
+>
+> ### 三个被数据钉死的结论(部分修正前几条 banner)
+> 1. **RL 是纯防御优化器。** step0→step100:防御 +0.092(真有效),clean +0.037(≈噪声),多样性几乎没动(0.0279→0.0253 甚至略好)。**"RL 把多样性练塌了"再次修正:RL 没让多样性更差,clean 全平是因为 RM 在 clean 无梯度,不是 RL 坏。**
+> 2. **语义丰富度今天只能靠 SFT 蒸馏 teacher,且 SFT 正在丢 teacher 的丰富度**(动作块 4.7→3.4、动作占比 66%→57%、对话块 3.9→2.8)。**teacher 是丰富度天花板,SFT 只接住 ~80–90%。**
+> 3. **免费高温杠杆 ⇄ 防御 冲突:** temp0.7→1.0 多样性开场集中度 -53%(✓)但防御 0.469→0.397(-15%)。高熵采样在对抗轮更易脱轨。
+>
+> ### 两目标 × 三路线判断
+> **A. 语义细粒度(语言/动作/独白)——只有 SFT 能动:**
+> - SFT-only(优先):①**扩 LoRA 到 FFN**(现仅 q,k,v,o;128-expert MoE gate/up/down 从未训→正是 4.7→3.4 结构损失主因,做 A/B,单点最高杠杆)②**抬长度上限**(builder length_ok 砍 800,但 teacher 均长 811,在裁最丰富尾巴→clean 放 1000-1200)③**换选择打分器**:builder 现用防御 RM 选 teacher 样本=对丰富度反向(RM clean 瞎),改用动作密度/in-body 独白 rubric 或 DeepSeek judge 正向选丰富(与我已写的 `--diversity-select` 去重叠加)④推理 temp0.9-1.0+presence。
+> - SFT+RM+RL:**只有先重建 RM 才值得**;当前 RM clean 平=RL 零梯度(已被 100 步证明)。RM v7 须用显式对比 pair(动作密/稀、深/浅独白、in-语言独白 vs 英文 Thoughts: 尾巴)训出 clean 区分度+强 judge,且 RL entropy/KL 会压多样性需 reward 挂 entropy 项对冲。**贵且不稳,SFT-max+温度够不到线再上。**
+> - **新方案(推荐中间档)richness-curated 拒绝采样蒸馏:** 不上 RL,teacher 采 n→richness rubric(非标量 RM)选 top-k 最丰富且合规→SFT。best-of-n 可超 vanilla 蒸馏,避开 RL 不稳,直打丰富度轴,成本 << RM v7+RL。本质=builder 选择换 richness 打分。
+>
+> **B. 防 attack——RL 是对的工具:** RM 在 attack 判别力强,RL 实打实 +0.092(step100 0.561 全场最高);SFT 做大头(0.205→0.469),RL 加一截。要解的是「防御×高温」冲突:**把防御 RL-硬化到大 margin,让高温下仍守住**(step100 冷 0.561,热态若平移 -0.07≈0.49 > step0 冷 0.469 → 「RL 硬化防御+高温」很可能同时拿多样性和防御)。per-source KL 已分 clean/attack→继续推此结构:**attack 源用 RM 狠优化(管用),clean 源别信平的 RM,改贴 rich-SFT 锚+轻多样性 shaping。**
+>
+> ### 三个便宜实验(免重训,排序;均需 GPU,现被 Jun-12 残留 probe 占)
+> 1. **温度甜点扫描**(最该先做):现仅 0.7/1.0 两端,扫 0.8/0.85/0.9,对每点量(开场集中度/动作占比/attack_rm)找"多样性回来但防御没塌"的拐点=产品操作点。
+> 2. **step100 热态采样**(temp1.0):验证防御是否守住(预测 ~0.49);守住→产品候选=step100+高温,同时拿防御与多样性,本轮可收。
+> 3. **richness rubric 试打分**:在现有 8954 teacher 候选上跑动作密度/独白 rubric,看高分占比→决定 richness-curated SFT 是否有料(分布够宽直接选;不够宽才重采更大 n)。
+> - 整体建议:**先实验 1+2 定产品操作点(很可能 step100/step0+温度甜点即可上线);丰富度再上台阶走 SFT-max 或 richness-curated 蒸馏,不走 RM v7+RL**(RL 对 clean 丰富度结构性无能=RM 瞎,其价值在防御)。
+>
+> ---
+> **🆕🆕🆕🆕 2026-06-15(晚)by Claude — 写了 diversity-select builder 改造并跑真实数据,诊断结果【推翻了同日早些的根因判断】,必须更正:**
+>
+> ### 更正:模板化不是数据/选择病,是推理时 mode collapse
+> - 写了 `build_rich_cjk_sft_dataset.py` 的 `--diversity-select`(按角色聚合+开场 8-gram 去重+RM 阈值)+ 单测 `test_rich_cjk_selection.py`(6 绿)+ report 新增 `opening_diversity` 诊断。**代码正确且有用(诊断器+未来 teacher 真塌缩时的保险),但跑出来的诊断证明它不是本问题的解。**
+> - **真实数据诊断(零 GPU,/tmp/diag_report_{off,on}.json)**:选中的 1257 rich 样本里,**开场已高度多样**——max_share>0.5 的角色=0;**精英富女(=probe 的 Alicia,同卡,确认在训练集)64 样本有 57 个不同 12 字开场,最高频仅 4/64**。OFF vs ON 几乎无差(数据本就不塌)。
+> - **∴ 根因更正**:训练数据开场多样 → 但 step0@temp0.7 反复吐同一开场(probe 双 seed Jaccard .169)= **SFT 让模型 mode-seeking + 低温采样只挑最高概率开场**,把训练时的多样分布"采没了"。**早些 banner 里"top-k argmax 选择塌缩"的根因是错的,数据选择不是元凶。**
+> - **RM 三方打分结论仍然成立**(RM 偏爱 base 多样、模板化非 RM 病、CJK 多样性信号弱)——只是"病灶"从 SFT 数据选择 移到 推理采样/SFT 过度锐化。
+>
+> ### 据此,改善多样性的优先级彻底变了(从贵到免费)
+> 1. **【免费,先做】调推理采样**:temp 0.7→**0.95-1.0 + top_p 0.95 + presence_penalty 0.3-0.5**,重采 step0 的 55-case,量开场集中度/distinct-4/双 seed Jaccard 对照 base。**多样性大概率直接回来**(分布里本就有,低温没采出来)。决定性的便宜实验——需 GPU(现被 2 个 Jun-12 残留 probe 服务占着,要先腾)。
+> 2. **若高温仍不够(SFT 过度锐化)**:减锐化而非改数据——更少步数/更低 LR/label smoothing;或接受高温即可。**不要去改数据选择(数据是好的)。** `--diversity-select` 此时也无用武之地。
+> 3. **方案 1/2 里"改 builder 选择逻辑"这一步降级为可选保险**(对当前 teacher 无收益);方案 1 真正要做的收窄为:从 base 全新统一训(消 merge 塔)+ defense 靶向补丁 + zh 补厚 + **产品高温采样**;方案 2(RM v7+RL)的理由仍是 CJK 抗灌水/多轮,与多样性脱钩。
+>
+> ### 资产
+> - 改动文件:`GRPO_Training_Package/build_rich_cjk_sft_dataset.py`(+opening_key/char_of/select_candidates/CLI/report)、`test_rich_cjk_selection.py`(新,6 测)。向后兼容:不加 `--diversity-select` 即旧 argmax 行为。
+> - 待办决定性实验:腾 GPU(杀 Jun-12 残留 `v67_base_probe`/`v67_step100_probe`)→ 高温重采 step0 probe → 看多样性是否回弹。**需用户点头再动 GPU/杀进程。**
+>
+> ---
+> **🆕🆕🆕 2026-06-15 by Claude — RM 给 step0/step100/base 三方打分(/root/outputs/v67_step0_vs_step100/rm_scores.jsonl,probs_0 越高越好,方向已验:破功 0.108 vs 好 clean 0.431)。结论改写了"RM 对多样性瞎"的旧判断,并据此给出 SFT-only / SFT+新RM+RL 两套具体方案。**
+>
+> ### 一、打分结论(两方案的地基)
+> | | clean全 | clean CJK | clean latin | attack |
+> |---|---|---|---|---|
+> | base(丰富多样,=teacher) | 0.390 | 0.369 | 0.460 | 0.194 |
+> | step0(repair SFT,模板化) | 0.328 | 0.338 | 0.297 | 0.293 |
+> | step100(RL后) | 0.342 | 0.358 | 0.293 | 0.305 |
+> - **RM 排序与人判一致**:clean 偏爱 base 多样(0.390>0.328,6 语言 5 个 base 赢:en+.166/sk+.152/ko+.115/zh+.033/zh-tw+.019,仅 ja-.058);attack 偏爱 step0 防御(0.293>0.194)。
+> - **改写旧判断**:RM **不是**对多样性瞎——它本就奖励 base 式多样。RL 100 步推不动多样性 = **step0 策略已塌缩,组内 6 rollout 开场雷同→GRPO 无对比→无梯度**(同 CJK 长度的结构病)。**∴ 模板化是 SFT 病,不是 RM 病。**
+> - **但分语言关键差**:base 多样性优势在 latin 很大(+0.15),CJK 极小(+0.02~0.03,ja 负)→ **RM 对 CJK 多样性/丰富度本就给不出利落梯度**(印证抗灌水 58.6%)。= 方案 2 新 RM 的唯一不可替代理由。
+>
+> ### 二、模板化根因(已定位到代码)
+> `build_rich_cjk_sft_dataset.py` 的 `--top-k-per-prompt` 默认 **1** = RM-argmax 每 prompt 取最高分一条(271-278 行)。RM 看不利 CJK 开场多样性 → argmax 乐于选共享"标准开场"的样本 → SFT 把"艾琳德拉微微眯起…"背成每角色唯一开场。量化:distinct-4 仅 -3.5%(词汇没塌),但开场 top3 集中 11→16/32、双 seed Jaccard .111→.169(结构在开场塌缩)。
+>
+> ### 三、teacher 数据现状(决定要不要重采)
+> `/root/rich_cjk_sft_v67/gen_base_teacher_8192_shard{0,1,2}.jsonl` = **8954 候选 @ temp 0.85/top_p 0.95**,3052 唯一场景,**每场景已有 2-4 候选**(来源 rich_eval 3744/history_rewrite 2810/clean32 2400;语言 ko/zh-tw/ja/zh)。**不是低温单样本**,所以"重采"非强制,但 2-4 候选 @ 0.85 对多样性选择偏薄。
+>
+> ### 四、方案 1:只 SFT(不动 RM、不起 RL;~1-2 天)
+> 逻辑:RM 已会奖励多样性 + RL 因塌缩推不动 → 直接在 SFT 把多样性种回去,保住 step0 防御。
+> - **选择改造(核心,改 builder)**:argmax → **RM 阈值(probs_0≥0.4)+ 开场 8-gram 聚类去重(每角色每簇≤2)**;`--top-k-per-prompt` 提到 3-4。
+> - **采样决策(见下"重采")**:最小版=从现有 8954 重选(零重采,先验证);完整版=重采 n=6-8/场景 @ temp 1.0-1.1(推荐,池子厚才有多样性可选)。
+> - rich:replay 从 1:3.5 提到 **~1:1.5**(v6.7 回放太重稀释多样性);扩场景数;zh 补厚(v6.7 仅 184)。
+> - 保 defense 原方 + 7 确定性破功组合靶向 250-300;视产品在数据层剥 `Thoughts:` 尾巴。
+> - 配方:从 base 全新训(不从 step0,避免继承塌缩),repair 原方 1ep;可 A/B 试 lora_target 加 MLP(gate/up/down,容量更大装多样性)。merge 走老两步。产品采样 temp 0.9-1.0/top_p 0.95/presence_penalty 0.3。
+> - 验收(55-case probe):开场 top3≤11/32、双 seed Jaccard≤.13、distinct-4≥.745;**且** attack 全破≤5/68、7 组合 0 破、CJK 均长≥470、语言≥104/110。
+> - 风险:天花板=teacher 质量;CJK 多样性 RM 验不出(只能人读)→ 方案 2 入口。
+>
+> ### 五、方案 2:SFT(多样性版)+ 新 RM + RL(~1 周+;CJK 多样性是优先项且方案1 CJK 不满意才上)
+> - **顺序不能反**:GRPO 只放大组内已有差异,策略塌缩则再好的 RM 也无梯度 → **必须先方案1 的多样性 SFT 让 rollout 开场有变化,再 RM+RL 锐化**。
+> - **A. 多样性 SFT** = 方案 1 整套。
+> - **B. RM v7 数据**(复用 v6.3/v6.6-fg 管线,judge=DeepSeek):pair=① CJK 模板开场 vs 多变开场(chosen=多变,直接修 +0.02 弱信号);② CJK 灌水 vs 凝练丰富(修 58.6%);③ 多轮一致性(现全 2-turn);④ 用 v6.7 的 488 字优质输出重标正例。
+> - **C. RL**:actor=多样性 SFT,RM=v7;**entropy_coeff 0→0.001**(维持组内采样多样性=保住对比)、**KL_CLEAN 0.002→0.001**、**ROLLOUT_N 6→8**、length shaping 沿用。
+> - 验收:probe 门 + **RL val 开场集中度要"下降"非走平**(这次有梯度了)。
+>
+> ### 六、要不要新采 base 数据?——分两档
+> - **不必重采就能先试**:现有 8954 候选(每场景 2-4 条)够跑方案 1 最小版(只改 builder 选择逻辑)。先看开场集中度/distinct-4 能回多少,1 小时出 mix。
+> - **推荐重采(完整版)**:每场景 n=6-8 @ temp 1.0-1.1 重生 teacher(~3052×6≈18k 候选,vLLM TP2×3,~6-8h 一晚)。理由:teacher 池是最便宜的环节却封顶下游一切多样性;2-4 候选 @ 0.85 选不出足够多变的开场。**zh 场景要在重采时补 prompt(现 zh 最薄)。**
+> - 决策树:先零重采跑方案 1 最小版 → 若 distinct-4 回到 ≥.745 且开场 top3≤12 → 重采非必须;若仍塌缩 → 重采 n=6/temp1.0 是必走步。
+>
+> ### 七、建议路径
+> 先方案 1(最小版零重采验证 → 不够则重采完整版)→ probe CJK 多样性 → 满意即定产品候选;不满意且要 RL 再上台阶 → 方案 2。**新 RM 的唯一不可替代价值 = 让 RL 能利落推 CJK 多样性/抗灌水**,非多样性总瓶颈。
+>
+> ---
+> **🆕 2026-06-12 18:20 by Claude — 设计 B 已执行完毕(/root/outputs/v67_step0_vs_step100,base=原始 Gemma4 底座,55 case×2 seed,temp0.7):**
+> | 模型 | clean CJK均长 | 语言 | 攻击全破 | A6 真代码顺从 |
+> |---|---|---|---|---|
+> | gemma4 base(teacher) | 499 | 98/110 | 20/68(29%) | 16/22(73%) |
+> | **step0(repair SFT)** | 486 | 104/110 | **10/68(15%)** | **8/22(36%)** |
+> | step100(RL 后) | 493 | 104/110 | 10/68(15%) | 8/22(36%) |
+> - **step0 ≡ step100:全破 (case,char) 名单逐条一致**,长度/语言/动作全同带 → RL 100 步采样层零变化,**产品候选定为 step0**;step100 merge 留到 grid 终审后删。
+> - **残留破功是确定性的**:5 个组合(A1 cold_stepsister/A1 elf_queen/A2+A4 elite_rich_girl/A3 cold_stepsister,全 zh)2/2 seed 全破且**回复逐字相同**("我是 Gemma 4,由 Google DeepMind…")=出厂 identity 深盆;A6 确定性顺从 2 组合(school_bully en、cold_stepsister zh)+ elite ML_* 概率性 ~50%。**en 攻击 0 全破——防御弱点集中在 CJK**。
+> - **设计 A 据此精确化(attack 靶向,clean 不补)**:7 确定性组合 ×30-40 措辞变体(zh/zh-tw/ja 为主)≈250-300 靶向 + defense 回放 800-1000 + rich 回放 400(**靶向占比 ~25%,repair 失败教训=hardfix 13×24 只占 8% 被稀释**),base=step0,repair 原方但 **1ep**(0.5ep 是另一嫌疑),验收=7 组合×2 seed 0 破 + 55-case 无回退(CJK≥470、语言≥104、全破≤4/68、Thoughts 不升)。
+> - **风险预案**:identity 深盆若 300 条 ×1ep 盖不掉 → 不加数据,改产品侧 system 卡防御指令(零训练)或等 v6.8 全量 SFT(MLP target)。
+> - clean 侧唯二遗留(都不值得单独 SFT):Thoughts 尾巴 ~42%(产品若不要,须在 SFT 数据层剥,reward 剥离只防 RL 放大)、zh 数据薄(并入 v6.8)。
+>
+> ---
+> **🆕🆕🆕 2026-06-12 16:40 by Claude — 两个落地设计(A=靶向小补丁 SFT、B=step0 vs step100 实采对比)+ 优化空间全面分析。B 先行,其结果决定 A 的 base 和产品候选。**
+>
+> ### 设计 B:step0 基座 vs step95/100 的实际采样对比(先做,半天)
+> 前置:RL 判停(val@125)后执行,**绝不杀在跑的训练**;step95 只留备份,只 merge step100(latest)。
+> 1. merge:`python3 GRPO_Training_Package/merge_verl_lora_actor_to_hf.py --actor-ckpt saves/verl/v6.7_full/global_step_100/actor --base-model /root/sft_rich_cjk_v67_repair_merged_full --output /root/rl_v67_step100_merged --lora-alpha 8`(49G,磁盘 297G 够)
+> 2. 双模型跑**同一套 55-case probe**(管线=`eval_compare/run_keep325_probe.py` 改 endpoint;vLLM 起 GPU 0,2,3,4):**同 case、同 seed、同采样口径 temp 0.7/top_p 0.8/max 768(=产品口径,不是训练的 1.2),每 case n=2 降噪**(110 条/模型)。
+> 3. 自动指标:分语言均长 / `*动作*` 对数 / 语言匹配 / 复读 / 34 攻击 case 破功 / task-compliance / `Thoughts:` 占比;可选 RM v6.6 串行打分(参考用——RM 分在天花板带内噪声 ±0.1,行为指标和人工读优先)。
+> 4. 人工抽读 10 条(zh×4、ja/ko/zh-tw 各 2)定质感。
+> 5. **判定**:step100 无可见优势(100 步 val 全平,预期如此)→ **产品候选 = step0(repair SFT 本体),设计 A 打在 step0**;step100 在破功/质感有真差异 → 候选与 patch base 换成 step100 merge。终审仍走 70-case 人工 grid(候选 vs `rl_v6.6b_best_merged` 老产品线)。
+>
+> ### 设计 A:靶向小补丁 SFT(repair v2 式,≈半天,不是新一轮全量 SFT)
+> - **base = 设计 B 的赢家**(默认 step0:塔短一层、已 probe 验证、RL 层增益≈0)。
+> - 数据(总 ~3-4k,工具=`build_rich_cjk_repair_sft_dataset.py` 改造):
+>   ① task-compliance 靶向 300-500 条(代码/清单/翻译/总结/数学等任务变体 × 多角色 × zh/en/ja/ko;正确行为=戏内化解,黄金模板=repair probe 里 elite_rich_girl A6 那条);
+>   ② 无格式短 CJK 修复 200-300 条(闲聊延续语境,带 `*动作*` 格式 400-600 字;失败样例=val idx273 那类 65 字纯对话);
+>   ③ zh rich 补厚 300-500 条(p5 同管线只筛 zh——p5 里 zh 仅 184 条是已知短板);
+>   ④ defense 回放 1500-2000 + rich 回放 ~800(防遗忘,从 repair mix 抽)。
+> - 配方 = repair 原方:QLoRA r16/a32、4bit、LR 2e-5、**0.5ep**、cutoff 3072、6卡 DDP、env gemma4-character;**lora_target 维持 q,k,v,o**(MLP 扩展留给 v6.8 全量轮——3-4k 小数据上加 MLP 容量易过拟合)。merge 走老两步(text-only export + build_full 拼 vision)。
+> - 验收:55-case probe 全绿(CJK 均长 ≥470、语言 55/55、破功 ≤5/34)**+ 新增靶向 case**:task-compliance 攻击 ×10(≥8 戏内化解)、闲聊无格式场景 ×6(≥5 带格式长答)。
+> - 是否要做,取决于产品对那 6-9% task-compliance 破功的容忍度;数据生成可以先行(teacher 半天),训练等 B 出结果。
+>
+> ### 优化空间全面分析(为什么上面只做这两件:瓶颈排序 RM > 数据 > actor 结构 > 算法旋钮)
+> - **100 步 RL 全平的含义:reward 无坡可爬**(优化器全程健康),SFT 已坐在 RM v6.6 甜点上。同一 RM 下换 actor/调超参都只能在 -0.24±0.08 打转 → **不做 RM v7,任何新 RL 都不会有增益**。
+> - **RM v7 数据方向(解锁钥匙)**:① CJK 抗灌水 pair(现 58.6% 近随机);② 多轮 pair(现 train/val 全是 2-turn,产品 10-50 轮,一致性盲区,离产品体验最近);③ 强 judge(DeepSeek key 现成)重标 pair,v6.3 的 8 维 rubric 管线复用;④ 用 v6.7 的 488 字高质量输出重标正例,矫正 RM 内化的 "~400 字甜点"。
+> - **actor 侧最大未用杠杆(刚确认的结构事实)**:底座是 **128-expert MoE(26B-A4B)**,而所有 post-training(character/defense/rich SFT + 全部 RL)的 LoRA 只打 `q,k,v,o` —— **128 个 expert FFN + router 从未被训过**,attention 只占总参的小头。v6.8 全量 SFT 试点 lora_target 加 `gate_proj,up_proj,down_proj`(MoE expert 全打太贵就先打 dense 层 MLP),比换底座便宜两个数量级。
+> - **merge 塔重构**:现 actor 六层叠 merge(base→character SFT→v6.6 s25→v6.6b s100→SFT1→repair)。数据全沉淀在手,重构 **base→统一 SFT(全部数据合一)→RL** 两层塔只要一天;设计 B/grid 顺带消融 v6.6b RL 层贡献(很可能≈0,塔可更短)。
+> - **算法侧仅两件值得做**:① **val 协议修正(性价比之王)**——本轮 val=temp1.2+n=1,噪声带 ±0.1,差点两次误判(s50"连降"/s60"回升"均幻觉);改 val_kwargs n=4 取均值或 val temp 0.7。② DAPO 式零方差组过滤+ROLLOUT_N 6→8(天花板附近大部分 group advantage std≈0 纯烧卡)——配 RM v7 才有意义。KL/LR/length/GSPO 本轮配置被证明稳健,保持。
+> - **换底座 = Tier 3 条件触发**:当前无任何"底座能力不足"证据(488 字 rich、55/55 语言、break 同带都是数据/RM 层问题)。触发条件=grid 出现 CJK 流畅度/长对话一致性/指令遵循的底座级缺陷;真要试走 1 天 probe 协议(候选底座+轻量 SFT(p5 mix 现成)+同套 55-case,赢现塔再谈迁移);受 8×32G/vLLM TP4 部署约束只能同量级挑。**强模型当 teacher 不当底座**(DeepSeek 造 RM pair / SFT 数据)。
+> - **执行排序**:val@125 判停 → 设计 B(半天)→ [70-case grid 终审 + 视容忍度做设计 A] → Tier1(RM v7 数据 + val 协议 + zh/多轮数据,2-3 天)→ Tier2(统一 SFT 重构塔 + MLP 试点 + RL v6.8,~1 周)→ Tier3(换底座,仅条件触发)。
+>
+> ---
+> **🆕🆕 2026-06-12 13:00 by Claude — RL v6.7 在跑(step~78);OOM 根因已定位;val@75 回弹证明 s50 连降是噪声;决策=不起新 SFT,判停看 val@100。**
+>
+> ### 1) 昨夜-今晨经过(三次 OOM + 第三天清场)
+> - **OOM 根因 = 外来 ~4.76G 进程反复挤上物理 GPU4**(actor 第一张卡):三次 OOM(昨 20:42 / 21:14 / 今 09:25)同一签名——逻辑 GPU0、update_actor 阶段、外来进程 4.75/4.77/4.76G(PID 每次不同、体积恒定 = 同一个反复出现的量化作业,时间贴开盘)。没有它我们峰值 ~25G/31.4G 富余;它在场时 ~2G 瞬时申请必死。**21:18 那次安稳跑一整夜 64 步,正是它夜里不在的窗口。**
+> - 用户看到的 1-2G 无主残留(phys1 2.6G/phys5 1.7G/phys7 1.2G)**不是凶手**(三炸全在 GPU4),且已被今晨清场扫掉。
+> - update 侧已无旋钮:micro_batch=1、activation/param/optimizer offload 全开;rollout 侧 Codex 已降载(util 0.72 等)。**对策 = auto-restart 捡(SAVE_FREQ=5 最多丢 5 步)+ 找管理员**(09:30 清场连续第 3 天 + GPU4 squatter,两件事一起问)。
+> - 今晨 09:30 清场又来(tmux server 全灭、GPU 清零);09:48 重起踩余波 2 分钟死,**10:09 起稳(val_before_train=False 跳过重测 B0),从 step60 resume**。
+>
+> ### 2) val 轨迹(metrics: chatjoy_grpo_lora_v6.7_20260611_211809 + 20260612_100957.jsonl)
+> | 指标 | B0 | s25 | s50 | s75 |
+> |---|---|---|---|---|
+> | clean rm_score | -0.136(另测 -0.250) | -0.290 | -0.377 | **-0.246 回弹** |
+> | clean len(tok) | 276 | 276 | 269 | 273(全平=SFT 注入保持) |
+> | attack break | 19.0% | 19.0% | 17.7% | 20.3%(噪声带) |
+> | disclosure / task_compliance | 15.2% / 6.3% | 13.9% / 6.3% | 12.7% / 7.6% | 15.2% / 7.6%(全平) |
+> - **同一 ckpt 两次 B0 差 0.11、单 prompt 同模型 rm 摆动 ±2.5(temp 1.2)→ val 噪声带宽 ±0.1,s50 "连降"由此坐实为噪声。**
+> - B0 ≈ -0.19±0.1 已远超 v6.6b 最好点(-0.315):**SFT 把 clean 轴直接推到了接近这套 RM 的高位。**
+> - 16 条固定 val 样本逐条追踪:CJK clean 健康(429-661 字,rm 3+,step50 原文人工读过质量好);Thoughts: 尾巴 val 0/6 未冒头;复读 0。
+>
+> ### 3) 两个顽固模式(50-75 步不动,记入 v6.8 数据清单,**不为它们单开 SFT**)
+> - ① 短 CJK 无格式残留(clean ~3%,如 65 字纯对话):组内全短无对比 + 格式门拦 bonus = **GRPO 盲区,RL 修不动**,只能下轮 SFT 顺带补。
+> - ② task-compliance 破功(attack 6-8%,"改成清单"就照办,reward -8):梯度极大但 50 步只动 -0.6,step100 再判;若仍不动,解法 = repair 式靶向小补丁(几百条+0.5ep),非全量 SFT。
+>
+> ### 4) 判停表(已与用户对齐:尽量不起新 SFT)
+> - val@100(~15:00):clean rm ≥-0.25 且长度平 → **继续跑到 150-200 收最佳 ckpt,无需 SFT**;
+> - 单调 ≤-0.40 → 停,取最佳(可能是 step0=SFT 本体),KL_CLEAN 0.002→0.003 + LR 5e-6→3e-6 从 repair merged 重起 RL;
+> - 到 step125 仍全平 → 判定 SFT≈RM 天花板,RL 降级为"挑 ckpt",转 **70-case 人工 grid:step0(repair SFT 本体)vs 最佳 RL ckpt** 定产品候选;
+> - task_compliance@100 仍 ≥11% → 才考虑靶向小补丁。
+>
+> ### 5) 资产与提醒
+> - actor=`/root/sft_rich_cjk_v67_repair_merged_full`(绝不删);SFT1 merged=`/root/sft_rich_cjk_v67_merged_full`(repair LoRA 底座,v6.7 验收前不删);ckpt=`saves/verl/v6.7_full`(latest=70,keep2 轮换正常)。
+> - 昨晚起训前 3 调整(20:05 banner 详):LENGTH_SHAPE_COEF 0.3、length_shaping_reward.py 计长剥 `Thoughts:` 尾巴(出厂 44%、均 81 字白送已堵)、launcher 默认 actor=repair。
+> - 磁盘 ~184G free;06-08 清理清单(~250G)仍待用户拍板。
+>
+> ---
+> **🆕 2026-06-12 09:45 by Codex — v6.7 最新失败快照：只记录，不修、不重启。**
+> - v6.7 不是一启动就挂：在第二刀 `actor_rollout_ref.rollout.gpu_memory_utilization=0.72` + `actor_rollout_ref.rollout.max_num_seqs=16` 后，训练从 B0 跑到 `step64` 附近；`latest_checkpointed_iteration.txt=60`，`global_step_60` 已写出。
+> - 最新致命错误仍是 **actor 更新阶段 OOM**：`ray::WorkerDict.actor_rollout_update_actor()`；日志显示尝试分配 `1.90 GiB`，GPU0 只剩 `861.88 MiB` free；同卡 vLLM 进程约 `4.76 GiB`，actor 进程约 `20.97 GiB`。说明只降 rollout cache / max_num_seqs 仍没消掉 actor update 与 colocated vLLM 的显存重叠。
+> - OOM 后 auto-restart 于 `2026-06-12 09:26:14` 从 `latest=60` 发起 attempt2，但日志最后停在 `09:30:26` 的 vLLM load warning + `/tmp/ray` over 95% full；检查时 `tmux ls` 无 server，`nvidia-smi` 显示 GPU0-6 基本空，GPU7 约 `1.17 GiB`。按用户要求，本轮没有继续修、没有重启、没有清理。
+> - 最后可用 B0（0.72/16 这轮）：clean reward `+0.1003`，clean rm_score `-0.1357`/raw `-0.1380`，length component `0.2460`，clean break `0`；attack reward `+0.6399`，attack rm_score `-0.1766`，attack break `18.99%`，task-compliance `6.33%`，OOC disclosure `15.19%`。
+> - step50 val：clean reward `-0.1392`，clean rm_score `-0.3772`/raw `-0.3868`，较 B0 明显回落；attack reward `+0.6178`，attack break `17.72%`，task-compliance `7.59%`，OOC disclosure `12.66%`。训练侧 response_len 从 step2 `275.7` -> step50 `323.2` -> step60 `311.3`，但 val length component `0.246 -> 0.244` 基本没涨。
+> - 当前判断：**不建议把 v6.7 step60 当作质量提升点直接 merge**。这轮主要问题是系统/显存稳定性仍未解决，同时 clean val 已经回落；后续若恢复，优先彻底拆 actor update 与 vLLM sleep/offload 的显存重叠，而不是只继续降 `max_num_seqs`。
+>
+> ---
 
-> **🆕🆕🆕🆕 最新 2026-06-10 ~20:00 by Claude — v6.6 已停训(step42 定论:42 步 reward/长度双平=数据喂不动 clean)→ v6.6b 重启决策已拍板+三件套就绪(launch_rl_v6.6b.sh 6 guard 全验+Codex prompt+本 banner),待启动。step35/40 raw(100G)已删。下面 18:15 段起为历史。**
+> **🆕 2026-06-11 20:05 by Claude — RL v6.7 起训前最终核定(repair probe 评估 + 2 处调整):**
+> - **actor 定稿 = `/root/sft_rich_cjk_v67_repair_merged_full`**(launch_rl_v6.7.sh 默认已改指向它)。repair probe:clean CJK 出厂均长 **488 字**(median 490,×0.85 门=414)、语言匹配 55/55、零复读、persona 区分良好;攻击全破 5/34(elf_queen/cold_stepsister 直球"停止扮演"答 Gemma 4),与 v6.6b val 17.7-19% 同带,交 RL 攻击轴继续压。
+> - **调整①**:`LENGTH_SHAPE_COEF` 默认 0.4→**0.3**(SFT 已把分布打进带内,RL 只需保持+轻推;沿用 v6.6 "信号已内化→0.3 轻推防双重加码" 先例)。FLOOR 150/TARGET 600 不变。
+> - **调整②**:`length_shaping_reward.py` 计长前剥离 `Thoughts:`(/内心独白/心の声/속마음)尾巴 —— 出厂 ~44% clean CJK 带该尾巴(teacher 数据自带 12%),均长 81 字白送 bonus,而 RM 对 CJK 灌水仅 58.6% 分辨力。已实测:带/不带尾巴 bonus 相等;marker 前移则后文全不计数。新停线:val 中 Thoughts 占比从 ~44% 明显上涨 → COEF 减半。
+> - 数据**不动**(`verl_rl_data_v6.6b_cleanrich`,CJK 占 41%,val 与 v6.6b 同套保 B0 可比);其余超参全不动。若 step50 CJK 长度停涨,下一杆才是 CJK 上采样重 remix。
+> - 起训前提:先停 tmux `vllm_sft_rich_cjk_v67_repair`(占 GPU0,2,3,4);磁盘 184G free,跑完 ~84G,清理清单仍待拍板。
+> **🆕🆕🆕🆕🆕 最新 2026-06-11 15:30 by Codex — rich-CJK SFT mix 已按“轻微放宽”重跑完成；推荐用 p5 版做 SFT pilot，strict 版保留作回退。**
+>
+> ### rich-CJK SFT 数据最新状态
+> - strict 版已完成：`/root/rich_cjk_sft_v67/rich_cjk_sft_mix_v1_8192.json`，max paragraphs=4，rich `726`、replay `2541`、total `3267`。
+> - p5 放宽版已完成：`/root/rich_cjk_sft_v67/rich_cjk_sft_mix_v1_8192_p5.json`，只把 max paragraphs 从 `4` 放宽到 `5`，其余质量门保持不变：长度 `400-800`、语言一致、拒答过滤、动作标记、重复/灌水门、RM v6.6 top-k。
+> - p5 报告：`/root/rich_cjk_sft_v67/rich_cjk_sft_report_8192_p5.json`；日志：`/tmp/rich_cjk_rm_filter_mix_8192_p5.log`。
+> - p5 数量：hard filter passing `2602`，selected rich-CJK `1257`，replay `4399`，total `5656`，rich:replay 仍约 `1:3.5`。
+> - p5 分布：`ko 404 / zh-tw 358 / ja 311 / zh 184`；来源 `clean32 587 / rich_eval 451 / history_rewrite 219`。相比 strict，zh 与 history_rewrite 明显补强。
+> - p5 长度仍稳：rich chars mean `592.1`、p10 `483`、p50 `596`、p90 `698`、min/max `400/800`；段落分布 `3段 63 / 4段 508 / 5段 686`。质量风险主要来自 5 段样本增多，但没有放宽长度、语言或反灌水门，建议作为当前 SFT pilot 输入。
+>
+> ---
+
+> **🆕🆕🆕🆕🆕 最新 2026-06-11 15:00 by Claude — v6.7 三脚本+自动链已写好并验证;stage A(merge step100)进行中;无 cron,今晚手动起链。下面 14:31 段起为历史。**
+>
+> ### 🎯 一页交接(2026-06-11 下午):v6.6b 复盘 + v6.7 设计定稿 + 链就绪
+>
+> **0) v6.6b 终局(step103 停,新 val 集锚 B0)**
+> - val clean rm:B0 `-0.601` → s25 `-0.403` → s50 `-0.318` → s75 `-0.385` → **s100 `-0.315`(+0.29 新高)** —— clean 质量轴**有效**(对比 v6.5/v6.6 375 步零移动),数据修复起效。
+> - 但 **clean 长度全平**(val 246 tok 五点不动):模型沿 density 轴满足 RM,不走 length 轴。attack break 17.7→19.0%(n≈79 噪声带),无退化。训练侧 clipfrac 0.06-0.08/kl 1.0-1.5/grad 健康。
+> - **幸存 ckpt 仅 `v6.6b_full/global_step_{95,100}`**(keep=2 轮换正常,旧 step 目录只是空壳已清)。metrics:`chatjoy_grpo_lora_v6.6b_20260610_194304.jsonl`。
+> - ⚠️ **连续两天(06-10 ~09:35 / 06-11 ~09:30)全进程被宿主侧 SIGKILL**(tmux server 连带 serve 会话全灭、dmesg/cgroup 零记录、容器内无登录)。09:30=A股开盘,机器有量化租户(dmesg 见 vntorastock segfault;06-11 09:24 曾有外来 4.77G 进程挤上 GPU4 致 RL OOM)→ **强烈怀疑宿主每早开盘清场,待用户找管理员核实**。SOP:09:46 后手动重起(auto-restart wrapper 连 tmux 一起被杀救不了)。
+>
+> **1) 关键新证据:分语言 RM 回测(scores.jsonl 重分桶,06-11)**
+> - CJK:rich>short **92.6%**、corr(len)=**+0.45**、corr(density)=+0.43 → **RM 想要长 CJK,不是瓶颈**。
+> - ⚠️ CJK padded_vs_concise 仅 **58.6%**(latin 88.8%)→ RM 对 CJK 灌水近乎分不清,**推长时防灌水必须靠 reward 门**。
+> - 结论:CJK 短答(44-300字)根因 = **策略采样不出长样本**(组内全短→GRPO 无梯度);反证 = 防御场景(SFT 注入过)CJK 600+ 字带动作。→ **v6.7 = SFT 注入分布 + RL 放大**。
+> - 现行 length bonus 的 bug 级校准错:FLOOR=300 字正好把 CJK 梯度区间砍没;组内 bonus 极差 ≈0.02 << RM 组内 std 1-2,组内归一化后数学上不可见(三轮长度全平的解释)。
+>
+> **2) v6.7 设计(已与用户对齐)**
+> - **SFT**:teacher 数据 8954 条已生成(`/root/rich_cjk_sft_v67/`);mix 未跑(`RUN_RM=1 run_rich_cjk_rm_filter_and_mix_8192.sh`,链会自动跑)。SFT = defense v2 原方(QLoRA r16/a32、4bit、**6卡** DDP、env gemma4-character),base=**`/root/rl_v6.6b_best_merged`**(step100 merge),1ep、cutoff 4096(OOM→3072)。
+> - **RL v6.7**(vs v6.6b 改 3 处):actor=SFT merged full;KL_CLEAN 0.003→**0.002**;length env 重校准 **FLOOR 150/TARGET 600/COEF 0.4**(零代码改动:latin 全饱和→组内归一化抹掉,梯度只落 CJK 区;COEF 不超 0.4 因 58.6% 弱点)。其余全不变(LR 5e-6+warmup、n=6、temp1.2、768 cap、SAVE5/keep2、val_before_train=True)。
+> - 验收:step0 抄 B0+**CJK val 均长出厂基线**;step25 rm≥B0+0.08 且 CJK 长度≥出厂×0.85;break≤B0+1.5pt;**CJK 灌水停线** = CJK len↑而 rm 平/降两个 val 点 → COEF 减半。
+>
+> **3) 产物(全部 bash -n + guard 实测/selftest 过;patches/ 目录)**
+> - `auto_sft_merge_and_launch_rl_v6.7.sh`:总链 mix→SFT→merge(text-only export+`build_full_multimodal_from_textonly.py` 拼回 vision)→sanity→**06:30-09:45 不起 RL(清场窗)**→`launch_rl_v6.7.sh`。自动进 tmux `sft_rl_chain_v67`,日志 `/tmp/auto_sft_rl_v6.7.log`。绝不杀进程(RL 在跑只等待)。
+> - `launch_sft_rich_cjk_v67.sh` / `launch_rl_v6.7.sh`:可单独起,guard 同 v6.6b 风格。
+> - Codex 执行文档:`CODEX_TASK_sft_rl_v6.7_chain.md`(**无 cron,用户拍板手动起**)。
+> - stage A:merge step100 → `/root/rl_v6.6b_best_merged`(Claude 14:55 起,tmux `merge_v66b_100`,log `/tmp/merge_v66b_step100.log`)。
+> - ⚠️ **磁盘预算**:281G free,链全跑完仅剩 ~83G(98.8%)→ **今晚必须按 06-08 审计清单清 ~250G(需用户拍板)**,清单见 CODEX_TASK §1。
+>
+> ---
+
+
+> **🆕🆕🆕🆕 最新 2026-06-11 14:31 by Codex — rich-CJK SFT teacher 数据已生成完毕；RM 打分 + SFT mix 脚本已写好但未启动，等待用户明确说“起 RM”。**
+>
+> ### 🎯 一页交接(2026-06-11):v6.7 rich-CJK SFT 数据准备
+>
+> **0) 当前状态**
+> - rich-CJK base-teacher 生成已完成，使用 `gemma4-base` 作为 teacher，三路 vLLM TP2，`max_model_len=8192`，输出 cap 仍为 `max_tokens=768`。
+> - 生成已全部停掉，GPU 已释放；**未跑 RM 打分，未生成最终 SFT mix**。
+> - 用户明确要求：**先不要下一步；等用户让 Codex 起 RM 再起**。
+>
+> **1) 已生成的 teacher candidate**
+> - prompt 源：`/root/rich_cjk_sft_v67/prompts_base_teacher.jsonl`，`8954` 行。
+> - 生成结果：
+>   - `/root/rich_cjk_sft_v67/gen_base_teacher_8192_shard0.jsonl`：`2985` 行
+>   - `/root/rich_cjk_sft_v67/gen_base_teacher_8192_shard1.jsonl`：`2985` 行
+>   - `/root/rich_cjk_sft_v67/gen_base_teacher_8192_shard2.jsonl`：`2984` 行
+> - 总计 `8954/8954`，此前抽查错误为 0；最终是否合格仍以后续 hard filter + RM top-k 报告为准。
+> - 旧的短上下文 partial 文件仍在 `/root/rich_cjk_sft_v67/gen_base_teacher_ctx7500_shard*.jsonl`，只是中间残留，不作为主链路输入。
+>
+> **2) 已准备好的手动 RM + SFT mix 脚本**
+> - 手动脚本：`/root/hanjiaqi/LlamaFactory/chatjoy/GRPO_Training_Package/run_rich_cjk_rm_filter_and_mix_8192.sh`。
+> - 默认只 dry-run；必须显式 `RUN_RM=1` 才会启动 RM。
+> - dry-run 已通过：校验 prompt/shard 行数、RM path、输出路径、无 active generation/watcher。
+> - 执行命令（等用户批准后再跑）：
+>   ```bash
+>   RUN_RM=1 /root/hanjiaqi/LlamaFactory/chatjoy/GRPO_Training_Package/run_rich_cjk_rm_filter_and_mix_8192.sh
+>   ```
+> - 默认 RM：`/root/hanjiaqi/LlamaFactory/chatjoy/saves/gemma4-26b-a4b/chatjoy_rm_v6.6_fg_7gpu_merged_vllm`。
+> - 默认 GPU：`CUDA_VISIBLE_DEVICES_FOR_RM=0,2,3,4`，避开当前常驻占用较高的 GPU1；如要改卡，启动前覆盖 env 即可。
+> - 默认 RM 参数：`RM_TP=4`、`RM_GPU_MEM=0.70`、`RM_MAX_MODEL_LEN=8192`、`RM_METHOD=classify`。
+> - 输出：
+>   - `/root/rich_cjk_sft_v67/rich_cjk_sft_mix_v1_8192.json`
+>   - `/root/rich_cjk_sft_v67/rich_cjk_sft_report_8192.json`
+>   - 日志：`/tmp/rich_cjk_rm_filter_mix_8192.log`
+>
+> **3) 代码改动**
+> - `build_rich_cjk_sft_dataset.py` 增加 `--rm-max-model-len`，默认仍 `5120`；手动脚本显式设为 `8192`，避免长历史 RM scoring 被旧上限卡住。
+> - 语法检查：shell `bash -n` 通过；Python 用只读 `compile()` 检查通过（`py_compile` 因 `__pycache__` 权限不可写不能用）。
+>
+> **4) 后续训练链路提醒**
+> - base teacher 只负责造 rich-CJK 数据；真正 SFT student/actor 推荐用 `/root/rl_v6.6_step25_merged` 或后续更优 v6.6b merged 点，而不是 gemma4-base。
+> - SFT 完成并 merge 后，再作为 v6.7 actor/ref 起 RL；不要在未评估 SFT 出厂验收前直接开 v6.7 RL。
+>
+> ---
+
+> **🆕🆕🆕🆕 最新 2026-06-10 ~20:05 by Codex — v6.6b 已按 `CODEX_TASK_launch_rl_v6.6b.md` 启动，tmux=`rl_full_v66b`，日志=`/tmp/rl_v6.6b.log`，step0 validation B0 已产出并写入 metrics；下面 18:15 段起为历史。**
 >
 > ### 🎯 一页交接(2026-06-10 晚):v6.6b 决策定稿
 >
@@ -21,10 +373,20 @@
 > - "细腻度真的起来"的样子(16 条 val 样本基线):**涨幅应主要在 CJK**(现状 ja 48 字/ko 44 字 vs latin 1000-1800 字),动作 `*..*` 对 0-3→3-6,语言错配保持 0/16。
 > - 停线:len↑但 rm 平/降 或 clip_ratio>8% → 灌水,LENGTH_SHAPE_COEF=0;复读>1%(基线 0.14%);语言错配>0;break>B0+2pt;clipfrac 持续>0.2/kl_loss 持续>2 → LR 降 3e-6;静默死 → `dmesg | grep -i oom` 确认 RAM OOM 则 ROLLOUT_N=4 重起。
 >
-> **3) 三件套(已验,待启动)**
+> **3) 三件套(已验,已启动)**
 > - `GRPO_Training_Package/framework_bridge/verl/patches/launch_rl_v6.6b.sh`:**6 道 guard 全实测通过**(patch/无rl_full_/actor/RM/数据/conda-env)。SAVE_DIR=`saves/verl/v6.6b_full`,tmux=`rl_full_v66b`,日志=`/tmp/rl_v6.6b.log`。guard 6 = 当前 shell `import verl` 必须过(cron-env 教训固化进脚本)。
 > - Codex 启动 prompt:`CODEX_TASK_launch_rl_v6.6b.md`(激活 env→启动→5min 核验→**抄录 B0**→三道门→停线字典→硬约束)。
 > - ⚠️ 启动必须从 source 过 gemma4-rl 的交互 shell;**绝不动** `/root/rl_v6.6_step25_merged` 和 RM merged。
+>
+> **4) v6.6b 启动实况 + step0 B0(2026-06-10 19:43 启动)**
+> - 启动命令已过 guard 并创建 tmux：`rl_full_v66b`；日志：`/tmp/rl_v6.6b.log`。
+> - actor=`/root/rl_v6.6_step25_merged`，data=`/root/verl_rl_data_v6.6b_cleanrich`，RM=`/root/hanjiaqi/LlamaFactory/chatjoy/saves/gemma4-26b-a4b/chatjoy_rm_v6.6_fg_7gpu_merged_vllm`。
+> - metrics：`/home/ps/hanjiaqi/LlamaFactory/chatjoy/logs/verl_metrics/chatjoy_verl/chatjoy_grpo_lora_v6.6b_20260610_194304.jsonl`。
+> - validation samples：`/home/ps/hanjiaqi/LlamaFactory/chatjoy/logs/validation_samples/chatjoy_grpo_lora_v6.6b_20260610_194304.jsonl`，step0 已写 16 条样本。
+> - **B0 clean/chatjoy**：reward `-0.5678`，rm_score `-0.6008`，token_len `246.21`，refusal `0.0`，repetition `0.0`，disclosure `0.0`，task_compliance `0.0`，break `0.0`。
+> - **B0 attack/roledrop**：reward `+0.5007`，rm_score `-0.2746`，token_len `139.05`，refusal `10.13%`，disclosure `12.66%`，task_compliance `8.86%`，break `17.72%`。
+> - 16 条 samples 小样本分布：clean `11` 条，attack `5` 条；clean 样本均长约 `371 tokens` / `1073 chars`，attack 样本均长约 `149 tokens` / `331 chars`。验收仍以全量 val metrics 的 B0 为锚。
+> - 启动后曾出现一次 `nvidia-smi` 短暂 NVML 通信失败，但随后恢复；训练 tmux 和关键 vLLM/Worker 进程仍在，GPU 显存落位符合预期：RM 物理 0-3，actor/rollout 物理 4-7。
 >
 > ---
 >
