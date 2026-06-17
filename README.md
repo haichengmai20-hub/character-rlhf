@@ -28,13 +28,17 @@
 
 ---
 
-## 📚 三大能力深读（deep_dives/，本仓库主菜）
+## 📚 能力深读（deep_dives/，本仓库主菜）
+
+前三篇是工程/算法三件套（显存、RM、RL 动力学）；后两篇是从真实数据里读出的**研究判断**——同一组 v6.9 实验，一篇问"为什么会这样"（机制），一篇问"那该怎么决策"（何时转 RL）。
 
 | # | 深读 | 一句话 | 代表性内容 |
 |---|---|---|---|
 | 1 | [显存算账与 GPU 通信](deep_dives/01_memory_accounting_and_gpu_communication.md) | 在 8×5090（无 NVLink/P2P、31.36GB/卡）上为 26B/30B MoE **把每一 GB 显存和每条通信路径算清楚** | ZeRO 1/2/3 显存×通信量账（all-gather/reduce-scatter 原语级）· NUMA/QPI 拓扑约束 · verl colocate 的 param_offload 两张账表（0.09GB vs 12.2GB 余量）· vLLM cumem **虚拟地址预留**语义 + 三档 mem-util 复测（三个值三种死法，每个都能用加法解释）· FSDP merge 51.7GB 不可行性证明 · update_weights 串行换防重排 |
 | 2 | [RM 数据构造、训练与奖励 + 归因](deep_dives/02_rm_data_reward_and_attribution.md) | 偏好数据怎么造、RM 怎么训、最终 reward 怎么设计，**每次进退都归因到具体根因** | 三类单因负样本（DOE 思路）+ 门控 + sample_weight · Bradley-Terry 与三个训练敏感点 · 六版台账（94.5→86.4→86.0→95.5）：batch 方差/cosine 周期/缺陷样本逐个归因 · score head 两阶段凸优化恢复 · v6.3 三杠杆（第 6 candidate/roledrop pair/8 维 rubric）+ 统计验收门 · **奖励反向训练破角的发现与修复**（Goodhart 实例，误报 1/16→0/16）|
 | 3 | [RL 动力学：参数、趋势与策略应对](deep_dives/03_rl_dynamics_params_and_strategy.md) | 每个 RL 参数的**算法原理依据** + 动态指标看板 + 六个"趋势→归因→应对"实战 | GRPO 组内优势/GSPO 序列级比率（为何配 MoE+标量 RM）/DAPO 非对称 clip/per-source KL/熵正则原理 · bonus 按 σ 标定、SAVE_FREQ 按崩溃间隔定、LR constant vs cosine 的选择逻辑 · psKL 平台期 val 序列与多杠杆响应 · grad_norm 尖峰解读 · v6.5 375 步零移动双重归因 · **base 27% < v2 55% < v1 91%** → 停 RL 转 defense-SFT 的决策链 |
+| 4 | [Clean 富化为何侵蚀防御 + SFT 天花板](deep_dives/04_richness_defense_tension_and_sft_ceiling.md) | 一组反直觉数字（step0 16.2% → 富化 40% → 补 defense 仍 33.8%）**拆成两个互斥假说，用数据判真伪** | 数据覆盖稀释 vs 行为表征冲突两假说 · unique defense 120→2686（22×）真破功不降反升=Pareto 碰壁 · 真代码 5→9→11 / 真身份 6→13→12 分类归因 · **否决"teacher 产不出 defense"**（49 条 A6 正样本 0% 含代码、78.8% in-char 良率）· 三处与上游文档不一致的数据自纠 |
+| 5 | [何时从 SFT 转向 RL：入口门判据](deep_dives/05_when_to_move_from_sft_to_rl.md) | 把"该不该起 RL"拆成四道可证伪的门，**每道门配一次违反它的真实代价** | 门 A 评测能否看见失败（v6.5 375 步空转）· 门 B RM 目标轴有无梯度（分轴方差 0.037 vs 0.36）· 门 C 残余失败是否 SFT 不可约（加数据看斜率）· 门 D RL 的代价非零（base 27%→RL 55% 把防御训坏 / 温度脆 / canary 门）· 决策树 + RL 有用的充要条件 |
 
 ---
 
@@ -106,10 +110,12 @@ chatjoy-character-rlhf/
 ├── CASE_STUDY.md                ⭐ 闭环叙事：7 个归因循环（业务→数据→训练→归因→再迭代）
 ├── DATA.md                      ⭐ 完整数据/模型分层清单（哪些入库、哪些只记录）
 │
-├── deep_dives/                  ⭐⭐ 三大能力深读（本仓库主菜）
+├── deep_dives/                  ⭐⭐ 能力深读（本仓库主菜）
 │   ├── 01_memory_accounting_and_gpu_communication.md   显存算账 × ZeRO × 通信原语 × vLLM/cumem
 │   ├── 02_rm_data_reward_and_attribution.md            RM 数据构造/训练/奖励设计 × 数据归因
-│   └── 03_rl_dynamics_params_and_strategy.md           RL 参数原理 × 动态趋势观察 × 策略应对
+│   ├── 03_rl_dynamics_params_and_strategy.md           RL 参数原理 × 动态趋势观察 × 策略应对
+│   ├── 04_richness_defense_tension_and_sft_ceiling.md  富化为何侵蚀防御 × 双假说判真伪 × SFT 天花板
+│   └── 05_when_to_move_from_sft_to_rl.md                何时转 RL × 四道入口门 × 过早起 RL 的代价
 │
 ├── docs/                        工程知识库（项目全程原始记录）
 │   ├── project_chatjoy_overview.md       全链路总纲 + RM/GRPO 全记录 + 当前状态
