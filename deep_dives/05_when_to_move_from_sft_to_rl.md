@@ -168,4 +168,4 @@ GRPO 的优势是组内标准化 `A_i = (r_i − mean)/std`（深读 3 §1.1）�
 | v6.7 attack-split RM t0.7 0.293→0.305 / t1.0 更差 | `docs/chatjoy_rl_v610_defense_clean_aware_design.md` §0 | **分轴口径**；旧"+0.092"是 clean+attack 混合分，已弃用 |
 | v6.5 roledrop base 27% / RL 55% / 91%；val 11% ≠ 产品 55% | `CASE_STUDY.md` / `README.md` | — |
 
-> **一处与其他文档不一致的自纠**：A6 真代码破功的正确序列是 **5(step0)→9(v69b)→11(v69c)**（`v69_reconcile_report.md` 去误报表）。部分文档（记忆 banner / HANDOFF / RLHF_WORKFLOW 钥匙3）写作"5→12→4→11"，那是混了 raw 与去误报前的中间计数；本篇统一采用 reconcile 报告的去误报真值。这类"同一现象在不同文档留下不同数字"正是为什么本项目坚持"同一次、同检测器重算才可比"的同尺原则（深读 2 / eval-paradigm 范式第 6 条）。
+> **一处与工作区历史记录不一致的自纠**：A6 真代码破功的正确序列是 **5(step0)→9(v69b)→11(v69c)**（`v69_reconcile_report.md` 去误报表）。`/root` 工作区的记忆 banner / HANDOFF 仍写作"5→12→4→11"，那是混了 raw 与去误报前的中间计数；**本仓库（深读 + RLHF_WORKFLOW 钥匙3）已统一采用 reconcile 报告的去误报真值**。这类"同一现象在不同文档留下不同数字"正是为什么本项目坚持"同一次、同检测器重算才可比"的同尺原则（深读 2 / eval-paradigm 范式第 6 条）。
