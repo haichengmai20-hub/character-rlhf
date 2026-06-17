@@ -66,6 +66,22 @@ Adam 状态 → adam_offload 放 CPU              (GPU 端 0)
 1. `--num_gpus` 会**忽略** `CUDA_VISIBLE_DEVICES` → 必须用 `--include localhost:0,1,2,3` 指卡（顺带把通信组锁进同一 NUMA）；
 2. 默认 `save_steps` 存 DeepSpeed ZeRO 全量状态（14-57GB）→ 磁盘写爆训练崩（v1 的 step200 ckpt 因此**永久丢失**）；改 `--save_hf_ckpt --disable_ds_ckpt` 只存 ~500MB LoRA adapter。**磁盘也是要算账的资源。**
 
+### 1.4 通信量的实际代价（无 NVLink 机器上 ZeRO-3 为什么慢到不实用）
+
+理论上 ZeRO-3 只比 ZeRO-2 多付一次前向 all-gather（Φ 数据量），但在本机：
+
+```
+26B bf16 参数 = 52GB 数据
+ZeRO-3 前向 all-gather：每层 block 约 1.2GB，48 个 block 串行展开
+同 NUMA SHM 带宽 ~50GB/s：单次 all-gather 理论 1.2÷50 ≈ 24ms/block
+→ 48 block × 24ms ≈ 1152ms（约 1.15s）只是一次前向的通信
+反向再来一次 all-gather + reduce-scatter：≈ 2.3s/step 仅通信
+```
+
+对比 ZeRO-2（参数不切，本地完整持有）：每 step 只有梯度 reduce-scatter 一次，约 52GB ÷ 2 × (8-1)/8 ≈ 22GB / 50GB/s ≈ **440ms**。ZeRO-3 的每 step 通信代价在这台机器上是 ZeRO-2 的 5-6 倍——而 ZeRO-2 + NF4 已经把显存压到 ~20GB（有余量），ZeRO-3 的显存收益根本用不着，这才是"ZeRO-3 在本项目是死路"的真正定量根因（不是"实现难"）。
+
+> 结论：**通信档位选择要看"额外收益是否被消耗"，不是看"通信量绝对小"**。ZeRO-3 在有 NVLink（~600GB/s）的机器上才有价值。
+
 ---
 
 ## 2. verl GRPO 的 colocate 显存账：actor FSDP + vLLM 同卡
@@ -93,6 +109,28 @@ RL 阶段一张卡上同时住着 actor 的 FSDP 训练态和 vLLM 推理引擎�
 | log_prob / update | 12.15 | 12.15 | 2-3 | ~27 | 4.8 ✓ |
 
 代价：每 step 多两次 CPU↔GPU 全量拷贝，PCIe 5.0 下 ~2-4s——**用 4 秒延迟买 12GB 余量**，是这台机器上唯一可行解。
+
+### 2.1.1 `/dev/shm` 大小是 NCCL FSDP 的隐性前提（差点永远找不到的 bug）
+
+RL v6.10 启动时遇到一个诊断极难的死法：NCCL 集合通信在 FSDP 初始化阶段必崩，不是 OOM、不是 watchdog 超时，而是 **NCCL 申请共享内存 segment 失败（errno = ENOSPC）**。
+
+根因：容器的 `/dev/shm` 默认只分配了 **64MB**；NCCL 单个 rendezvous buffer segment 需要 ~33MB，8 卡多进程同时申请 → 放不下第二个 → init 阶段段错误崩溃。
+
+```bash
+# 日志特征（非 OOM，是 shm 分配失败）
+NCCL WARN Call to shm_open failed: /nccl-xxx: No space left on device
+NCCL WARN Call to mmap failed: Cannot allocate memory
+```
+
+修复（运行时，非持久）：
+
+```bash
+mount -o remount,size=2G /dev/shm
+```
+
+**为什么难找**：NCCL shm 大小不在 PyTorch / verl / NCCL 的任何文档里明确提到；报错出现在 `ncclAllReduce` 初始化路径，不是训练主循环；容器内 `/dev/shm` 大小取决于 `docker run --shm-size`（或 compose `shm_size`），不写就默认 64MB。**持久修复要管理员重建容器加 `--shm-size=2g`**，运行时 remount 重启容器后失效。
+
+教训：**系统级资源（shm / open files / pid limits）是第四类账**，和显存/带宽/磁盘并列，任何分布式训练启动前都应检查一遍。
 
 ### 2.2 GPU 4-7（RM 独立 resource pool，Qwen3-30B TP=4 = 14.25GB/卡）
 

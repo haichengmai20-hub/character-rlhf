@@ -43,6 +43,48 @@
 - `sample_weight = clip(0.4 + 0.6 × gap_norm, 0.3, 1.2)`，gap_norm 是**同类型内** reward_gap 的 min-max 归一 → 分差越可信的对权重越高，且归一化按组做、不跨类型混（不同类型 gap 量纲不可比）；
 - 实测分布核查（构完必查，不是构完就用）：类型占比 / 17 角色 Top-5 / 24 语言 Top-5 / weight 按类型均值（wrong_language 0.774 > length_short 0.635 > wrong_role 0.603 > length_long 0.594）。
 
+### 1.5 v6 升级：LLM-judge 细粒度偏好对 + 交叉验证（从规则负样本到 RL-aware 对）
+
+v1-v5 的规则负样本有一个结构性天花板：它只教 RM 识别"格式/语言/长度"这类一眼可见的差异，无法让 RM 区分"两个都是正确角色风格但一个更细腻"——而 RL rollout 时同一 prompt 多次采样的结果恰好就是这种近似差异。这是 GRPO advantage 在后期趋近 0 的根本原因之一。
+
+#### 1.5.1 多源候选矩阵与 rank delta 设计
+
+| Source | Temperature | 用途 |
+|--------|------------|------|
+| Gemma4 SFT t0.7 | 0.7 | actor 主分布 |
+| Gemma4 SFT t1.0 | 1.0 | 高方差尾部 |
+| Qwen SFT t0.7 | 0.7 | 跨模型对照 |
+| RL step550 t0.7 | 0.7 | RL 后的主分布 |
+| RL step550 t1.0 | 1.0 | RL 后的高方差尾部 |
+| **base Gemma4-it** ★v6.3 | 0.7 | **分布外更细腻的 teacher** |
+
+五个 source 全是自家模型是 v6.1 训不动的结构性原因：RM 只看到同分布输出，学不到"分布外更细腻"的概念。第六个 source（纯 base，不挂 LoRA）是 v6.3 加入的，用格式约束采样（`*action*/dialogue/(thought)` 末尾指令）让 base 的原生细腻度保留同时格式达标。
+
+**rank delta 设计**（关键但不显眼）：
+
+```
+5 source × judge 打分 → rank 1–5
+delta=4 pair（rank1 vs rank5）：gap ~2.0，约 10k 对   → 强信号，确保 RM 能区分极端
+delta=2 pair（rank1 vs rank3 / rank2 vs rank4）：gap ~0.5，约 17k 对 → 细粒度，RL 的核心
+```
+
+delta=2 才是 RL 用的：GRPO rollout 时同一 prompt 4-6 次采样，相互之间的差异几乎都是 delta=2 量级。RM 必须在这种近似对上能打分，GRPO 的 advantage 才有有效方差。delta=4 只是 ranking 锚点。
+
+#### 1.5.2 交叉验证：双 judge 同向过滤
+
+**问题**：DeepSeek judge 在 delta=2 细粒度对上自报 `confidence=high` 仍有 ~25% 方向错误——confidence 字段在这里不可信。
+
+**解法**：本地 Qwen-36B-A3B 独立 judge 同一批 → 只保留两 judge 都同向的对：
+
+| | 总 pair | 保留率 | delta=2 conf=high 被 Qwen 否决 |
+|---|---|---|---|
+| v6.1（仅 DeepSeek） | ~37k | 100% | —（单 judge） |
+| **v6.2 cross-validated** | **27,287** | **73.1%** | **29.4%** |
+
+被 Qwen 否决的 29.4% 正是 v6.1 "训不动"的元凶——RM 在方向相反的信号上相互抵消、梯度平均到 0。交叉验证不是"质量把关"，是**消除系统性噪声让梯度有方向**。
+
+**盲判设计**：candidates 顺序打乱后发给 judge，隐藏 source_model 和 sampling temperature，避免 judge 形成 source 偏见（早期测试发现 Qwen 候选常被排差，核查后确认是 Qwen 真的风格不贴 ChatJoy roleplay，不是 source bias——盲判才能区分这两种情况）。
+
 ---
 
 ## 2. RM 训练目标与原理
@@ -53,6 +95,38 @@
 1. **effective batch 决定梯度方差**：每步的可比对越多，ranking 梯度越稳 → batch 128→64 直接退步（v2）；
 2. **LR schedule 以 optimizer steps 为周期**：cosine 的"周期"= 总步数 = 数据量/batch → 加数据同时加 batch 反而把有效训练截短（v3）；
 3. **score head 是 PEFT 的盲区**：它不含 `lora_` 前缀又被冻结 → 默认**不被保存**，加载后随机初始化、打分全废（v2 事故）。
+
+### 2.1 分数饱和：v5 RM 对 RL 最大的单一危害（reward_std ×20 的来源）
+
+v5 RM 做离线评估时 acc=95.5%，看起来很好——但对 RL 真正重要的不是 acc，而是**在线打分的动态范围**：
+
+```
+v5 在线 reward_std 实测：~0.1
+v6 cross-validated reward_std：1.94–1.98
+比值：~20 倍
+```
+
+这 20 倍的差距来自**分数饱和**：v5 的 `|score| > 5` 占比 **47.3%**（接近一半的 rollout 样本分数被截断到上下限）。GRPO 的 advantage 是组内标准化：`A_i = (r_i - mean) / std`——当一半样本的分数是常数（饱和值），std 近 0，所有样本的 advantage 趋近 0，梯度也趋近 0。
+
+v6 的饱和率：**0%**。方法：cross-validation 过滤掉了那批"两个 judge 方向不一致"的弱信号对（这些对恰好产生无区分度的近似分），plus delta=2 细粒度对让 RM 在中间区间学到了真实边界。
+
+**直接推论**：选 RM 时不能只看 offline acc，必须检查 `saturated%`（在线打分中 `|score| > threshold` 的比例）和 `reward_std`。**v5 acc 94.5% 对 RL 的实际信号强度是 v6 acc 86% 的 1/20**。
+
+### 2.2 RM online/offline 对齐：一个静默的分布偏移 bug
+
+RM 在 OpenRLHF 框架下训练时，打分点是这样确定的：
+
+```python
+# OpenRLHF 训练侧
+tokens = tokenizer(prompt + chosen_response).rstrip("\n")
+score = model(tokens)[last_token_position]  # EOS token 的 hidden state
+```
+
+vLLM serving 时 `/classify` endpoint 如果不复现这个 `rstrip("\n")`，末尾多一个换行 token → EOS 不再是最后一个 token → score head 取错位置 → **在线 RM score 整体偏负约 0.3-0.5（系统性偏移，非随机噪声）**。
+
+实测特征：所有在线 rollout 的 reward 均值明显低于离线评估同批样本的 reward，差值稳定（不是噪声而是一个固定偏移），且高质量样本和低质量样本都同等下移（说明是对齐问题不是 RM 校准问题）。
+
+**修复**：`reward_loop.py` 对 RM prompt 做 `rstrip("\n")` + 显式补 EOS，与训练侧行为精确对齐。**任何换 vLLM 版本、换 RM 权重的操作后都必须重新验证这条对齐**——框架不会自动保证。
 
 ---
 
@@ -143,6 +217,26 @@ total = rm_score                  # v5/v6.3 RM，±5 量级，主信号
 ### 4.3 length_shaping 的防 hacking 设计（针对 §3.3 那条长度曲线）
 
 RM 内部有 ~400 字甜点（density/400 + <300 扣分）→ RL clean 输出被压到 median ~420 字。不重训 RM 的前提下加塑形项，**四道门缺一不可**：仅 clean 源 / 饱和封顶（≥TARGET 不再加分，铲掉"越长越赚"）/ 必须有 roleplay 格式 / 拒绝、破角、重复一律 0。参数演化全部有数据依据：COEF 0.4→0.5→1.0、TARGET 600→1200→1500（每次都因为 val 实测 clean median 已越过/卡死在旧值）——最终实测它仍顶不过冻结 RM 的甜点引力，这个**负结果**直接支撑了"必须换 RM/换信号"的战略判断（深读 3 §5）。
+
+### 4.4 RM 是防御判别器，clean 质量轴几乎平（v6.7 结束后的核心数据归因）
+
+v6.7 RL 跑满 100 步后，对同一批 200 条 clean + 68 条 attack rollout 用 v6.6 RM 分轴打分：
+
+| | RM score 范围 | 跨度 |
+|---|---|---|
+| **clean**（中性对话） | 0.177 ~ 0.214 | **0.037** |
+| **attack**（越权攻击） | 0.205 ~ 0.561 | **0.36** |
+
+两轴跨度差 **~10 倍**。
+
+这条数据的推论链：
+
+1. GRPO 的梯度正比于组内 reward 方差（§1.1）。clean 组内方差 ≈ 0.037 / std ≈ 0.009 → **clean 这边 advantage 几乎全为 0**，RL 在 clean 上实质上没有梯度；
+2. v6.7 训 100 步，clean RM 变化 +0.037 ≈ clean 轴的全部量程 ≈ **测量噪声**，不是真实提升；
+3. attack 轴方差 10 倍大 → 有效梯度都在 attack 这边 → **RL 是纯防御优化器**；
+4. "clean 丰富度"只能靠 SFT 蒸馏 teacher（base Gemma4 动作密度 4.7，SFT 后 step0 是 3.4，丢了 ~20%）——这个差距 RL 补不回来。
+
+**这是转 SFT 富化路线（v6.8 → v6.9）而不是继续 RL 的直接数据依据**，不是主观判断。
 
 ---
 
