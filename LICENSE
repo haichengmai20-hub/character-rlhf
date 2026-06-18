@@ -1,0 +1,29 @@
+Copyright (c) 2026 ChatJoy authors. All rights reserved.
+
+This repository is published as an engineering case study and portfolio
+reference. It documents the methodology, code, and analysis behind the
+ChatJoy multilingual role-play RLHF pipeline.
+
+You MAY:
+  - read, review, and reference this repository for evaluation, learning,
+    and discussion (e.g., hiring review, technical assessment, citation
+    with attribution).
+
+You MAY NOT, without prior written permission from the copyright holder:
+  - copy, redistribute, or republish the contents in whole or in part;
+  - use the code, configs, reward functions, or datasets (including the
+    small samples included here) in other projects or products;
+  - use the character cards, attack samples, or any product IP contained
+    or referenced herein.
+
+No grant of patent, trademark, or other rights is implied.
+
+THE CONTENT IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED. THE AUTHORS ARE NOT LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER
+LIABILITY ARISING FROM THE USE OF THIS CONTENT.
+
+Note: large training datasets and model weights are NOT included in this
+repository (see DATA.md). The base models referenced (Qwen3, Gemma) are
+governed by their own respective licenses.
+
+To request other usage terms, contact the repository owner.

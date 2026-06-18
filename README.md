@@ -10,6 +10,19 @@
 
 ---
 
+## 🧭 怎么读这个仓库（按时间预算选路径）
+
+| 时间预算 | 读什么 | 适合谁 |
+|---|---|---|
+| **5 分钟** | 本 README → [VERSION_MAP](docs/VERSION_MAP.md)（一张表看懂版本演进） | 快速判断项目价值与进度 |
+| **30 分钟** | README → [CASE_STUDY](CASE_STUDY.md) → [深读 5：何时从 SFT 转 RL](deep_dives/05_when_to_move_from_sft_to_rl.md) | 面试官 / 技术评审 |
+| **2 小时** | ＋ [RLHF_WORKFLOW](RLHF_WORKFLOW.md) ＋ [深读 1–4](deep_dives/) | 关心 RLHF 方法论的人 |
+| **复现向** | [DATA.md](DATA.md) → [training/README](training/README.md) → [docs/training_runbooks](docs/training_runbooks.md) | 工程复现（先看复现边界）|
+
+> 想直接拿走可迁移的方法（其他角色/陪伴/客服模型通用）：[docs/MIGRATABLE_RLHF_PATTERNS.md](docs/MIGRATABLE_RLHF_PATTERNS.md)。
+
+---
+
 ## 🧭 方法论主线：数据归因驱动的闭环
 
 这个项目想体现的不是"跑过 SFT/RM/RL"，而是一条闭环能力：
@@ -92,13 +105,16 @@ ChatJoy 的目标不是通用问答，而是**多语言角色扮演陪伴对话*
 
 ---
 
-## 📍 当前状态 (2026-06-08) — RL 已到顶，战略拐点
+## 📍 当前状态 (2026-06-18) — SFT 富化弧到天花板，转 RL v6.10
 
-- **v6.5（硬化版 GRPO）已停训**：两轴 375 步零移动 — `clean_RM` 卡冻结 RM 的 ~1.33 天花板；attack break 平在 ~11-12% 不降。收敛形态同 v6.3。
-- **致命问题**：验证集信号 ≠ 产品真实攻击（val 几乎不触发 bullet 注入 → 训练信号稀疏 + val 测不出产品攻击）。
-- **下一步不是再纯 RL 调参**：ATTACK 轴 = 定向 **defense-SFT v2**（teacher 蒸馏戏内化解，针对 6 张失败角色卡）；CLEAN 轴 = temp/length 已证无效，要进只能 LLM-judge 在环 / 刷新 RM。
+完整版本表见 [docs/VERSION_MAP.md](docs/VERSION_MAP.md)；以下是主线：
 
-> 完整时间线见 [docs/project_chatjoy_overview.md](docs/project_chatjoy_overview.md) 顶部"当前状态 (2026-06-08)"。
+- **v6.5 停训（战略拐点，2026-06-08）**：硬化 GRPO 375 步零移动；发现 **val 11% ≠ 产品 55%**、且 RL 把 base 原生防御训坏（roledrop 破功 base 27% → RL 55%）→ 不再纯 RL 调参，**富度交 SFT、防御留 RL**。
+- **SFT 富化弧（v6.7 → v6.8 失败 → v6.9 成功）**：v6.9 best-of-N 均衡选择器把 clean 动作/对话拉到 ≥step0、逼近 base（clean **PASS**）；但富化**侵蚀了身份防御**（真破功 step0 16.2% → 富化后 ~40%）。
+- **三轮 SFT-defense 到天花板（v6.9b/v6.9c）**：unique defense 120 → 2686（22×），真破功只到 32.4%/33.8%，**压不回 step0 的 16.2%** → SFT-defense 是 whack-a-mole（机制见 [深读 4](deep_dives/04_richness_defense_tension_and_sft_ceiling.md)）。
+- **下一步 = RL v6.10（就绪 / 待评估）**：在 v6.9c 上做防御硬化 + clean-aware reward（per-source KL + canary 门守 clean），只降 attack、不碰 clean 富度。**"何时该从 SFT 转 RL"的完整判据见 [深读 5](deep_dives/05_when_to_move_from_sft_to_rl.md)**；本仓库不含 v6.10 运行结果。
+
+> 早期（至 v6.5）完整时间线见 [docs/project_chatjoy_overview.md](docs/project_chatjoy_overview.md)；v6.6b 之后见 [VERSION_MAP](docs/VERSION_MAP.md) 与深读 4/5。
 
 ---
 
@@ -106,8 +122,9 @@ ChatJoy 的目标不是通用问答，而是**多语言角色扮演陪伴对话*
 
 ```
 chatjoy-character-rlhf/
-├── README.md                    本文件
-├── CASE_STUDY.md                ⭐ 闭环叙事：7 个归因循环（业务→数据→训练→归因→再迭代）
+├── README.md                    本文件（项目入口 + 阅读路径 + 当前状态）
+├── LICENSE                      版权声明（All Rights Reserved，作品集参考用途）
+├── CASE_STUDY.md                ⭐ 闭环叙事：7 个归因循环（业务→数据→训练→归因→再迭代，收在 v6.5 战略转向）
 ├── DATA.md                      ⭐ 完整数据/模型分层清单（哪些入库、哪些只记录）
 │
 ├── deep_dives/                  ⭐⭐ 能力深读（本仓库主菜）
@@ -118,6 +135,9 @@ chatjoy-character-rlhf/
 │   └── 05_when_to_move_from_sft_to_rl.md                何时转 RL × 四道入口门 × 过早起 RL 的代价
 │
 ├── docs/                        工程知识库（项目全程原始记录）
+│   ├── README.md                          📑 docs 分层索引（主线 / 设计 / 交接归档 / 运行手册）
+│   ├── VERSION_MAP.md                     ⭐ 版本地图：v1→v6.10 一张表
+│   ├── MIGRATABLE_RLHF_PATTERNS.md        ⭐ 可迁移的 RLHF 判断框架（通用方法论）
 │   ├── project_chatjoy_overview.md       全链路总纲 + RM/GRPO 全记录 + 当前状态
 │   ├── training_runbooks.md              各阶段可直接运行的启动命令/超参/路径
 │   ├── chatjoy_business_ux_tech_mapping.md  8 维业务体验 → 技术手段映射
@@ -128,6 +148,7 @@ chatjoy-character-rlhf/
 │   └── chatjoy_rl_takeover_error_fix_log.md RL 接手错误修复全记录
 │
 ├── training/
+│   ├── README.md               训练代码导览 + 如何只跑 reward/detector 单测
 │   ├── GRPO_Training_Package/   ⭐ 强化学习全套代码
 │   │   ├── anti_ooc_disclosure.py        反破角 reward（关键修复）+ 测试
 │   │   ├── anti_refusal_reward.py        反拒绝 reward
