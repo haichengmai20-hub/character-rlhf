@@ -104,6 +104,7 @@
 - `training/sft_richness/probe_analysis/` — step0/step100/base/v68 三轴 held-out probe + 温度甜点扫（t0.8/0.85/0.9/1.0）+ 多样性分析 + RM 分语言打分脚本；**关键产物 `rm_scores.jsonl` / `rm_scores_hot.jsonl`**：clean/attack 分轴打分证「RM 是防御判别器，clean 质量轴几乎是平的」（clean 跨度 0.037 vs attack 跨度 0.36，差 ~10 倍）
 - `reports/sft_richness/` — v6.8 三份 probe 报告（heldout / rich_opening / 综合）+ CODEX 任务卡，记录 v6.8 失败归因（独白过冲 187%/对话回退/动作没动 → 弃用，重做 v6.9）
 - `reports/sft_richness/rl90_temp_sweep_report.md` — RL v6.10 step90 的部署参数 sweep：`temperature/top_p/presence/min_p` 均调不动真破功，最终服务参数定为 `t=0.8/top_p=0.95/presence=0.4/min_p=0`
+- `training/sft_richness/probe_analysis/classify_true_breaks.py` + `clean_diversity_v2.py` — step90 sweep 的两个关键复现工具：真破功去误报、修复版开场多样性指标
 - `docs/rl_v610_step90_service_guide.md` — step90 merged 模型服务复现指南（vLLM/Gradio/GPU/公网隧道）
 - `docs/WORKSPACE_ARTIFACT_AUDIT_20260618.md` — 工作区产物补全审计，记录哪些文件全文入库、哪些 sample、哪些仅记录
 

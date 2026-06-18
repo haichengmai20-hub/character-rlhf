@@ -46,7 +46,12 @@ status before audit: clean, origin/main 同步
 - `detect_ooc.py`
 - `select_v69_balanced.py`
 - `run_three_model_probe.py`
+- `run_v69b_probe.sh`
+- `run_v69c_probe.sh`
 - `run_v69_balanced_autoresume.sh`
+- `probe_analysis/classify_true_breaks.py`
+- `probe_analysis/clean_diversity_v2.py`
+- `probe_analysis/score_attack_rm.py`
 - `probe_analysis/*` 中的 sweep、diversity、RM scoring 脚本和小型 RM score 产物
 
 因此这些脚本不需要重复上传。
@@ -100,4 +105,3 @@ benchmarks/business/
 - benchmark 应如何从散落 probe 变成冻结业务基准。
 
 剩余不足不是"缺少某个本地文件"，而是还没有把 business benchmark v1 真正实现为一套可运行目录。
-

@@ -147,6 +147,7 @@ chatjoy-character-rlhf/
 │   ├── project_chatjoy_overview.md       全链路总纲 + RM/GRPO 全记录 + 当前状态
 │   ├── training_runbooks.md              各阶段可直接运行的启动命令/超参/路径
 │   ├── chatjoy_business_ux_tech_mapping.md  8 维业务体验 → 技术手段映射
+│   ├── RUN_HANDOFF_INDEX_20260618.md     v69b/v69c/v6.10/step90 调参执行交接索引
 │   ├── chatjoy_rm_v6_3_roledrop_design.md   RM v6.3 设计（rubric 8维 / delta=2 / roledrop pair）
 │   ├── chatjoy_rm_v6_3_roledrop_plan.md     v6.3 实施计划 + 70-case 验收 grid
 │   ├── chatjoy_rm_v6_3_roledrop_handoff.md  v6.3→v6.4→v6.5 交接（最新）

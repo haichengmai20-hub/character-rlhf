@@ -16,6 +16,7 @@
 | [project_chatjoy_overview.md](project_chatjoy_overview.md) | 全链路总纲 + RM/GRPO 全记录（早期至 v6.5 战略转向）|
 | [training_runbooks.md](training_runbooks.md) | 各阶段可直接运行的启动命令 / 超参 / 路径（复现入口）|
 | [rl_v610_step90_service_guide.md](rl_v610_step90_service_guide.md) | RL v6.10 step90 merged 模型服务指导：环境、硬件、vLLM/Gradio 参数、公网隧道 |
+| [RUN_HANDOFF_INDEX_20260618.md](RUN_HANDOFF_INDEX_20260618.md) | 近期 v69b/v69c/v6.10/step90 部署调参执行交接索引 |
 
 > 仓库根目录的 [README](../README.md) / [CASE_STUDY](../CASE_STUDY.md) / [RLHF_WORKFLOW](../RLHF_WORKFLOW.md) / [deep_dives](../deep_dives/) 是更高层的主线，本目录是其支撑材料。
 
