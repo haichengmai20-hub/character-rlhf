@@ -168,6 +168,10 @@ chatjoy-character-rlhf/
 │   ├── data_prep/              线上导出 / 数据集生成 / 过滤 / 难负样本挖掘
 │   └── design/                 reward_model_design.md / README_GRPO / Gemma4 SFT 复盘
 │
+├── benchmarks/                  评测基准
+│   ├── BUSINESS_BENCHMARK_GUIDE.md  ⭐ 业务 benchmark 构造指导（给执行 AI 的 spec）
+│   └── RMTBENCH/                外部学术 roleplay 基准（参考锚，en/zh 多轮）
+├── reports/                    评测报告（v69 三方真破功 / AB 对比 / 周报 / probe 报告）
 ├── characters_samples/         角色卡示例（产品 IP，仅放 2-3 张做样例）
 └── data/samples/               小样本（SFT 5 条 / test head / LlamaFactory dataset_info）
 ```
