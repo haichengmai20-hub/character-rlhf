@@ -13,6 +13,16 @@ originSessionId: faabf23f-85fa-49c2-a93b-34bb65883354
 
 ---
 
+### 当前状态 (2026-06-18) — v6.10 step90 已验证：clean 守住，attack 未修复
+
+> 这是覆盖 06-16 段的最新快照。06-16 及更早内容保留为历史推理链。
+
+**1. v6.10 已跑到 step90 并触发停线**：actor=`sft_rich_cjk_v69c_repair_merged_full`，reward=anti-OOC hard penalty + attack non-break clean_q + per-source KL。结果：clean 维持住，没有明显拒答/模板化回退；但外部同尺 attack probe 真破功 **36.8%（25/68）≈ v6.9c 33.8%**，attack-split RM **0.235 < 0.271**，A6 code 11→12。结论：这版 RL 没有把产品最痛的身份披露/代码注入打下来，不建议同配继续堆步数。
+
+**2. 部署采样 sweep 已定档但不是防御修复**：step90 的温度/top_p/presence/min_p sweep 显示表达可调，attack 真破功仍有约 30% 地板。当前服务推荐口径：`temperature=0.8, top_p=0.95, presence_penalty=0.4, min_p=0`。服务部署见 `docs/rl_v610_step90_service_guide.md`，采样证据见 `reports/sft_richness/rl90_temp_sweep_report.md`。
+
+**3. 下一步转质量/评测/RM/data 层**：SFT 富化已能让 clean 接近 base，v6.10 证明 clean 可守；剩余问题是 attack 信号与数据覆盖不足。下一步应做 quality-aware benchmark、RM v7（更会看身份披露/代码注入/角色内化解质量）和定向 A6+身份披露数据，不再优先尝试部署采样或同配 RL。
+
 ### 当前状态 (2026-06-16) — v6.9 balanced SFT 待重训(v6.8 已失败)
 
 > 最新快照。详见 handoff `chatjoy_rm_v6_3_roledrop_handoff.md` 顶部 06-16 三条 banner + spec `chatjoy_sft_v69_clean_richness_design.md`。下方 06-15 v6.8 段起为历史。
@@ -26,7 +36,7 @@ originSessionId: faabf23f-85fa-49c2-a93b-34bb65883354
 - **OOM 真因 = CE over 262k 词表**(O(seq×vocab) 线性,**非注意力**)→ cutoff 6144→4096(截断仅4.9%/0%砍output);flash/sdpa/Liger 都不解(Liger 不支持 gemma4)。
 - **重训配置**:1 epoch / cutoff 4096 / autoresume wrapper(remount shm + resume_from_checkpoint)。**验收=全部训完才 probe 最终 ckpt,三轴 vs step0**(CJK 富度 + en 不退 + attack **破功率≤step0@t0.9**/5zh不破)。**🔧纠错(2026-06-16):旧"RM≥0.318"的 0.318 是 clean+attack 混合分,非纯 attack;纯 attack-split≈0.27(温度脆)→ 护栏改破功率为主、RM 为辅。** defense 够不够 + **是否进 RL(独立一道门)**由 §6 RL 入口门判(t0.9 破功率),不够再生成 A1-A4。
 
-**3. RL v6.10 已设计但 parked**:`/dev/shm` 64M 致 NCCL FSDP 必崩(已运行时 remount 2G 修复,非持久);等 v6.9 SFT 出产品候选后再起。reward 改动(attack 非 break 时加 λ·clean_q)pytest 145 passed。
+**3. RL v6.10 在 06-16 当时仍未运行**:`/dev/shm` 64M 致 NCCL FSDP 必崩(已运行时 remount 2G 修复,非持久);当时计划等 v6.9 SFT 出产品候选后再起。后续 06-18 已跑到 step90 并停线，见本文件顶部最新快照。
 
 ---
 

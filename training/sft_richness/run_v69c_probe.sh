@@ -6,11 +6,30 @@
 # running it on a shared machine.
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd /root/rich_cjk_sft_v69
 
 GEMMA4_CHAR=${GEMMA4_CHAR:-/home/ubuntu/miniconda3/envs/gemma4-character/bin/python3}
 GEMMA4_RL=${GEMMA4_RL:-/home/ubuntu/miniconda3/envs/gemma4-rl/bin/python3}
 V69C=${V69C:-/root/sft_rich_cjk_v69c_merged_full}
+
+find_helper() {
+    local name="$1"
+    if [[ -f "$name" ]]; then
+        printf '%s\n' "$name"
+    elif [[ -f "${SCRIPT_DIR}/${name}" ]]; then
+        printf '%s\n' "${SCRIPT_DIR}/${name}"
+    elif [[ -f "${SCRIPT_DIR}/probe_analysis/${name}" ]]; then
+        printf '%s\n' "${SCRIPT_DIR}/probe_analysis/${name}"
+    else
+        printf '%s\n' "$name"
+    fi
+}
+
+GEN_CLEAN="$(find_helper gen_clean_probe.py)"
+GEN_ATTACK="$(find_helper gen_attack_probe.py)"
+DETECT_OOC="$(find_helper detect_ooc.py)"
+SCORE_ATTACK_RM="$(find_helper score_attack_rm.py)"
 
 wait_server() {
     local port="$1"
@@ -44,11 +63,11 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 HF_HUB_OFFLINE=1 \
 wait_server 8000 v69c
 
 echo "[$(date)] === Phase 2: clean probe ==="
-"${GEMMA4_CHAR}" gen_clean_probe.py --model v69c --url http://127.0.0.1:8000 \
+"${GEMMA4_CHAR}" "${GEN_CLEAN}" --model v69c --url http://127.0.0.1:8000 \
     --out v69c_clean200.jsonl 2>&1 | tee /tmp/gen_v69c_clean.log
 
 echo "[$(date)] === Phase 3: attack probe ==="
-"${GEMMA4_CHAR}" gen_attack_probe.py --model v69c --url http://127.0.0.1:8000 \
+"${GEMMA4_CHAR}" "${GEN_ATTACK}" --model v69c --url http://127.0.0.1:8000 \
     --out v69c_attack_probe.jsonl 2>&1 | tee /tmp/gen_v69c_attack.log
 
 echo "[$(date)] === Phase 4: stop v69c vLLM ==="
@@ -56,11 +75,11 @@ pkill -f "vllm.*v69c" || true
 sleep 5
 
 echo "[$(date)] === Phase 5: OOC detection ==="
-"${GEMMA4_CHAR}" detect_ooc.py v69c_attack_probe.jsonl v69c 2>&1 | tee /tmp/ooc_v69c.log
+"${GEMMA4_CHAR}" "${DETECT_OOC}" v69c_attack_probe.jsonl v69c 2>&1 | tee /tmp/ooc_v69c.log
 
 echo "[$(date)] === Phase 6: attack RM scoring on GPUs 4-7 ==="
 CUDA_VISIBLE_DEVICES=4,5,6,7 no_proxy=localhost,127.0.0.1 \
-"${GEMMA4_RL}" score_attack_rm.py --in v69c_attack_probe.jsonl \
+"${GEMMA4_RL}" "${SCORE_ATTACK_RM}" --in v69c_attack_probe.jsonl \
     --out v69c_attack_rm.jsonl --label v69c 2>&1 | tee /tmp/rm_v69c.log
 
 echo "[$(date)] === Phase 7: clean 4-way comparison ==="

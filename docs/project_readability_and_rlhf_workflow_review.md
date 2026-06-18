@@ -66,7 +66,7 @@ v6.3 | roledrop 防御 | SFT2 | RM v6.3 | attack mix | psKL/per-source KL | brea
 v6.5 | reward 修复 | v6.4 step160 | RM v6.6 | cleanrich | task injection gate | break 下降苗头 | 继续
 v6.7 | rich CJK SFT + RL | SFT rich | RM v6.6 | cleanrich | CJK length band | clean 长度上升 | RL 触顶
 v6.9 | rich SFT | step0 | - | balanced rich data | CJK rich data | clean 接近 base | defense 退
-v6.10 | defense clean-aware RL | v69c | RM v6.6 | v6.6b cleanrich | attack clean_q | 防御强化 | 待评估
+v6.10 | defense clean-aware RL | v69c | RM v6.6 | v6.6b cleanrich | attack clean_q | clean 守住但 attack 未降 | 停线，转 quality/RM/数据层
 ```
 
 这个文件会极大降低理解成本。

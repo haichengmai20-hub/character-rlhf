@@ -1,6 +1,6 @@
 # RL v6.10 设计:temp-鲁棒防御 + clean-aware reward(在 step0 上试)
 
-> 状态:**已 parked(2026-06-16),等 v6.9 balanced SFT 出产品候选后再起。** 06-15 起训失败=`/dev/shm` 64M 致 NCCL FSDP 初始化必崩(33MB segment 放不下),**已运行时 remount 2G 修复(非持久,容器重启需重 remount;持久要管理员设 --shm-size)**;reward 改动(attack 非 break 时加 λ·clean_q)已 pytest 145 passed,launch 脚本 `launch_rl_v6.10.sh` 现成。详见 handoff 顶部 v6.10 banner。
+> 状态:**已执行到 step90 并停线(2026-06-18)。** 本设计的 clean-aware + tight-KL 路线守住了 clean，但外部同尺 attack probe 未改善：真破功 **36.8%(25/68) ≈ v6.9c 33.8%**，attack-split RM **0.235 < 0.271**，A6 code 11→12。结论：当前 RM/RL/data 对直球身份披露与代码注入仍缺有效梯度，不建议同配继续堆步数。06-15 的 `/dev/shm` / NCCL 启动故障已用运行时 remount 2G 修复(非持久，容器重启需重 remount；持久要管理员设 `--shm-size`)。
 > 依据:温度扫描 + clean/attack 分轴 RM 复盘(handoff 06-15 banner)+ v68 spec §8。
 
 ## 0. 何时起训(RL 入口门 — 不要 speculative 起)

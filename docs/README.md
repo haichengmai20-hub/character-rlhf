@@ -27,7 +27,7 @@
 | [chatjoy_rm_v6_3_roledrop_design.md](chatjoy_rm_v6_3_roledrop_design.md) | RM v6.3：8 维 rubric / delta=2 / roledrop pair / base 第 6 candidate |
 | [chatjoy_sft_v68_clean_richness_design.md](chatjoy_sft_v68_clean_richness_design.md) | SFT v6.8 clean 富化（FFN LoRA + judge 选样，**失败案例**）|
 | [chatjoy_sft_v69_clean_richness_design.md](chatjoy_sft_v69_clean_richness_design.md) | SFT v6.9 clean 富化（best-of-N 均衡选择器，成功）|
-| [chatjoy_rl_v610_defense_clean_aware_design.md](chatjoy_rl_v610_defense_clean_aware_design.md) | RL v6.10 防御 + clean-aware reward（当前待评估版本）|
+| [chatjoy_rl_v610_defense_clean_aware_design.md](chatjoy_rl_v610_defense_clean_aware_design.md) | RL v6.10 防御 + clean-aware reward（已跑 step90：clean 守住，attack 未降；保留设计与停线结论）|
 | [chatjoy_business_ux_tech_mapping.md](chatjoy_business_ux_tech_mapping.md) | 8 维业务体验 → 技术手段映射（参考）|
 
 ## 📦 过程记录归档（交接 / 计划 / 调试日志 —— 需要追溯细节时再看）

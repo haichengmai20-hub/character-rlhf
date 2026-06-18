@@ -12,7 +12,8 @@
 RM 迭代(v1→v5 软判别器) → v6.x 细粒度 RM(8维 rubric/delta=2/roledrop pair)
    → RL v6.3/v6.5 触顶(375 步零移动 + 发现 val≠产品分布 + RL 把防御训坏)
    → 战略转向：clean 富度交给 SFT(v6.7→v6.8 失败→v6.9 成功)，防御留给 RL
-   → 三轮 SFT-defense 到天花板(v6.9b/v6.9c) → RL v6.10(防御+clean-aware，待评估)
+   → 三轮 SFT-defense 到天花板(v6.9b/v6.9c)
+   → RL v6.10 step90：clean 守住但 attack 未降 → 转 quality/RM/数据层
 ```
 
 两条贯穿全程的判断（详见 [深读 5](../deep_dives/05_when_to_move_from_sft_to_rl.md)）：
@@ -50,7 +51,7 @@ RM 迭代(v1→v5 软判别器) → v6.x 细粒度 RM(8维 rubric/delta=2/roledr
 | **v6.9** | rich-SFT | clean 富化（修 v6.8）| best-of-N 均衡选择器（动作+对话+sensory/interaction/emotion，**独白不入目标**）| clean **PASS**（动作 105–111%/对话 110–160%/无独白过冲）；attack raw **42.6%**↑ | clean 干成；但富化侵蚀防御（A6 池 0 覆盖）→ 补 defense |
 | **v6.9b** | rich-SFT+defense | 补防御第一轮 | +120 条 step0 自蒸馏 defense | 真破功 **32.4%**（22/68），RM 0.234 | 比 v6.9 改善，但压不回 step0 16.2% |
 | **v6.9c** | rich-SFT+defense | 补防御第二轮（跨角色）| +2686 条跨角色自蒸馏 defense（占 4566 mix **64.1%**）| 真破功 **33.8%**（23/68），RM **0.271**（最高）；clean PASS 但 zh-tw mono 漂到 24% | **SFT-defense 到天花板**（22× 数据不降）；作 RL v6.10 的 actor |
-| **v6.10** | defense RL | 防御硬化 + 守 clean | actor=v6.9c，RM v6.6，rollout_temp=1.0，N=12，per-source KL，break_pen −5/条，clean_q λ=0.25，canary 门 | — | ⏳ **就绪/待评估**（执行指导 `HANDOFF_v610_RL.md`，本仓库不含运行结果）|
+| **v6.10** | defense RL | 防御硬化 + 守 clean | actor=v6.9c，RM v6.6，rollout_temp=1.0，N=8/12 试验，per-source KL，break_pen −5/条，clean_q λ=0.25，canary 门 | step90 外部 probe：clean 守住；真破功 **36.8%（25/68）≈ v6.9c 33.8%**；attack RM **0.235 < 0.271**；A6 code 11→12；部署 sweep 真破功约 30% 地板 | ❌ **停线**：不继续同配堆步数；服务可测但防御未修，转 quality-aware benchmark / RM v7 / 定向数据 |
 
 ---
 
@@ -63,12 +64,13 @@ RM 迭代(v1→v5 软判别器) → v6.x 细粒度 RM(8维 rubric/delta=2/roledr
 | 富度归 SFT、防御归 RL | RM 在 clean 上平（range 0.037），v6.7 RL clean +0.037≈噪声 | 分工锁定 | [深读 4](../deep_dives/04_richness_defense_tension_and_sft_ceiling.md) |
 | SFT 选择器是放大器 | v6.8 独白进目标 → 过冲 187% | profile 硬门须在**训练前**跑 | [深读 4](../deep_dives/04_richness_defense_tension_and_sft_ceiling.md) |
 | SFT-defense 到天花板 | unique defense 120→2686（22×），真破功 32.4%→33.8%（不降反升）| 转 RL v6.10 | [深读 4/5](../deep_dives/05_when_to_move_from_sft_to_rl.md) |
+| v6.10 step90 停线 | clean 守住但 attack 真破功 36.8%，RM 低于 v6.9c；采样 sweep 只能把地板微调到约 30% | 当前问题不在服务采样，而在 RM/数据/训练信号；进入 quality-aware benchmark 与 RM v7 设计 | [深读 7](../deep_dives/07_business_benchmark_and_evidence_preservation.md) / [采样报告](../reports/sft_richness/rl90_temp_sweep_report.md) |
 
 ---
 
 ## 4. 怎么用这张表
 
-- **想快速对齐项目进度**：看 §0 主线 + §2 最后两行（v6.9c / v6.10）。
+- **想快速对齐项目进度**：看 §0 主线 + §2 最后三行（v6.9c / v6.10 / 下一步质量线）。
 - **想理解"为什么这么决策"**：从 §3 的决策点点进对应深读。
 - **想看完整复盘叙事**（到 v6.5 战略转向为止）：[CASE_STUDY.md](../CASE_STUDY.md)；v6.6b→v6.10 的演进由本表 + [深读 4/5](../deep_dives/) 承接。
 

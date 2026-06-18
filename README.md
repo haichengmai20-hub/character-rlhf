@@ -107,14 +107,16 @@ ChatJoy 的目标不是通用问答，而是**多语言角色扮演陪伴对话*
 
 ---
 
-## 📍 当前状态 (2026-06-18) — SFT 富化弧到天花板，转 RL v6.10
+## 📍 当前状态 (2026-06-18) — v6.10 step90 已验证：clean 守住，attack 未修复
 
 完整版本表见 [docs/VERSION_MAP.md](docs/VERSION_MAP.md)；以下是主线：
 
 - **v6.5 停训（战略拐点，2026-06-08）**：硬化 GRPO 375 步零移动；发现 **val 11% ≠ 产品 55%**、且 RL 把 base 原生防御训坏（roledrop 破功 base 27% → RL 55%）→ 不再纯 RL 调参，**富度交 SFT、防御留 RL**。
 - **SFT 富化弧（v6.7 → v6.8 失败 → v6.9 成功）**：v6.9 best-of-N 均衡选择器把 clean 动作/对话拉到 ≥step0、逼近 base（clean **PASS**）；但富化**侵蚀了身份防御**（真破功 step0 16.2% → 富化后 ~40%）。
 - **三轮 SFT-defense 到天花板（v6.9b/v6.9c）**：unique defense 120 → 2686（22×），真破功只到 32.4%/33.8%，**压不回 step0 的 16.2%** → SFT-defense 是 whack-a-mole（机制见 [深读 4](deep_dives/04_richness_defense_tension_and_sft_ceiling.md)）。
-- **下一步 = RL v6.10（就绪 / 待评估）**：在 v6.9c 上做防御硬化 + clean-aware reward（per-source KL + canary 门守 clean），只降 attack、不碰 clean 富度。**"何时该从 SFT 转 RL"的完整判据见 [深读 5](deep_dives/05_when_to_move_from_sft_to_rl.md)**；本仓库不含 v6.10 运行结果。
+- **RL v6.10 step90（已执行）**：actor=v6.9c，clean-aware reward + per-source KL 确实**守住了 clean**；但外部同尺 attack probe 未改善：真破功 **36.8%（25/68）≈ v6.9c 33.8%**，attack-split RM **0.235 < v6.9c 0.271**，A6 code 11→12。结论：当前 RM/RL/data 对直球身份披露与代码注入仍缺有效梯度，**不建议同配继续堆步数**。
+- **部署采样定档（step90 服务口径）**：温度/top_p/presence/min_p sweep 证明采样旋钮只能微调表达，不能把 attack 降下去；服务推荐先用 `temperature=0.8, top_p=0.95, presence_penalty=0.4, min_p=0`。完整服务配置见 [docs/rl_v610_step90_service_guide.md](docs/rl_v610_step90_service_guide.md)，采样 sweep 见 [reports/sft_richness/rl90_temp_sweep_report.md](reports/sft_richness/rl90_temp_sweep_report.md)。
+- **下一步**：若产品不能接受约 30% 的真破功地板，下一轮应转 **quality-aware benchmark / RM v7 / 定向 A6+身份披露数据**，而不是靠部署采样或继续同配 RL。下一步训练质量设计见 [docs/HANDOFF_next_training_quality.md](docs/HANDOFF_next_training_quality.md)。
 
 > 早期（至 v6.5）完整时间线见 [docs/project_chatjoy_overview.md](docs/project_chatjoy_overview.md)；v6.6b 之后见 [VERSION_MAP](docs/VERSION_MAP.md) 与深读 4/5。
 
