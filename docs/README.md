@@ -11,6 +11,7 @@
 |---|---|
 | [VERSION_MAP.md](VERSION_MAP.md) | 版本地图：RM v1→v5、RL v6.3→v6.10 一张表（目标/改动/实测/结论）|
 | [MIGRATABLE_RLHF_PATTERNS.md](MIGRATABLE_RLHF_PATTERNS.md) | 可迁移的 RLHF 判断框架（通用方法论，跨项目）|
+| [chatjoy_eval_paradigm.md](chatjoy_eval_paradigm.md) | 评测范式：固定 probe 集 + 统一 regex 重算 + 真破功去误报（深读 4/5 的口径来源）|
 | [project_chatjoy_overview.md](project_chatjoy_overview.md) | 全链路总纲 + RM/GRPO 全记录（早期至 v6.5 战略转向）|
 | [training_runbooks.md](training_runbooks.md) | 各阶段可直接运行的启动命令 / 超参 / 路径（复现入口）|
 

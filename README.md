@@ -16,7 +16,7 @@
 |---|---|---|
 | **5 分钟** | 本 README → [VERSION_MAP](docs/VERSION_MAP.md)（一张表看懂版本演进） | 快速判断项目价值与进度 |
 | **30 分钟** | README → [CASE_STUDY](CASE_STUDY.md) → [深读 5：何时从 SFT 转 RL](deep_dives/05_when_to_move_from_sft_to_rl.md) | 面试官 / 技术评审 |
-| **2 小时** | ＋ [RLHF_WORKFLOW](RLHF_WORKFLOW.md) ＋ [深读 1–4](deep_dives/) | 关心 RLHF 方法论的人 |
+| **2 小时** | ＋ [RLHF_WORKFLOW](RLHF_WORKFLOW.md) ＋ [深读 1–6](deep_dives/)（6 是 capstone） | 关心 RLHF 方法论的人 |
 | **复现向** | [DATA.md](DATA.md) → [training/README](training/README.md) → [docs/training_runbooks](docs/training_runbooks.md) | 工程复现（先看复现边界）|
 
 > 想直接拿走可迁移的方法（其他角色/陪伴/客服模型通用）：[docs/MIGRATABLE_RLHF_PATTERNS.md](docs/MIGRATABLE_RLHF_PATTERNS.md)。
@@ -43,7 +43,7 @@
 
 ## 📚 能力深读（deep_dives/，本仓库主菜）
 
-前三篇是工程/算法三件套（显存、RM、RL 动力学）；后两篇是从真实数据里读出的**研究判断**——同一组 v6.9 实验，一篇问"为什么会这样"（机制），一篇问"那该怎么决策"（何时转 RL）。
+前三篇是工程/算法三件套（显存、RM、RL 动力学）；中间两篇是从同一组 v6.9 实验里读出的**研究判断**（为什么富化侵蚀防御 / 何时该转 RL）；第六篇是 capstone——把全部串成一张"多个冲突目标如何协调"的框架。
 
 | # | 深读 | 一句话 | 代表性内容 |
 |---|---|---|---|
@@ -52,6 +52,7 @@
 | 3 | [RL 动力学：参数、趋势与策略应对](deep_dives/03_rl_dynamics_params_and_strategy.md) | 每个 RL 参数的**算法原理依据** + 动态指标看板 + 六个"趋势→归因→应对"实战 | GRPO 组内优势/GSPO 序列级比率（为何配 MoE+标量 RM）/DAPO 非对称 clip/per-source KL/熵正则原理 · bonus 按 σ 标定、SAVE_FREQ 按崩溃间隔定、LR constant vs cosine 的选择逻辑 · psKL 平台期 val 序列与多杠杆响应 · grad_norm 尖峰解读 · v6.5 375 步零移动双重归因 · **base 27% < v2 55% < v1 91%** → 停 RL 转 defense-SFT 的决策链 |
 | 4 | [Clean 富化为何侵蚀防御 + SFT 天花板](deep_dives/04_richness_defense_tension_and_sft_ceiling.md) | 一组反直觉数字（step0 16.2% → 富化 40% → 补 defense 仍 33.8%）**拆成两个互斥假说，用数据判真伪** | 数据覆盖稀释 vs 行为表征冲突两假说 · unique defense 120→2686（22×）真破功不降反升=Pareto 碰壁 · 真代码 5→9→11 / 真身份 6→13→12 分类归因 · **否决"teacher 产不出 defense"**（49 条 A6 正样本 0% 含代码、78.8% in-char 良率）· 三处与上游文档不一致的数据自纠 |
 | 5 | [何时从 SFT 转向 RL：入口门判据](deep_dives/05_when_to_move_from_sft_to_rl.md) | 把"该不该起 RL"拆成四道可证伪的门，**每道门配一次违反它的真实代价** | 门 A 评测能否看见失败（v6.5 375 步空转）· 门 B RM 目标轴有无梯度（分轴方差 0.037 vs 0.36）· 门 C 残余失败是否 SFT 不可约（加数据看斜率）· 门 D RL 的代价非零（base 27%→RL 55% 把防御训坏 / 温度脆 / canary 门）· 决策树 + RL 有用的充要条件 |
+| 6 | [多目标协调：三种机制消解冲突](deep_dives/06_coordinating_conflicting_objectives.md) **(capstone)** | 把 clean/attack/动作/语义等冲突目标归到 RLHF 仅有的**三种协调机制**，证明失败=选错机制 | 机制①阶段分配（富度→SFT/防御→RL）· 机制②阶段内聚合**加权和 vs 字典序门控**（v6.8 选择器放大独白 187% / anti_refusal 把"约束"塞进加权和→反向奖励破功）· 机制③ per-source 解耦（clean KL 0.008 / attack 0.002，守富度⇄改防御）· 冲突越深叠的机制越多（富度⇄防御=三层叠加）· 决策表 + 一页速查 |
 
 ---
 
@@ -132,12 +133,14 @@ chatjoy-character-rlhf/
 │   ├── 02_rm_data_reward_and_attribution.md            RM 数据构造/训练/奖励设计 × 数据归因
 │   ├── 03_rl_dynamics_params_and_strategy.md           RL 参数原理 × 动态趋势观察 × 策略应对
 │   ├── 04_richness_defense_tension_and_sft_ceiling.md  富化为何侵蚀防御 × 双假说判真伪 × SFT 天花板
-│   └── 05_when_to_move_from_sft_to_rl.md                何时转 RL × 四道入口门 × 过早起 RL 的代价
+│   ├── 05_when_to_move_from_sft_to_rl.md                何时转 RL × 四道入口门 × 过早起 RL 的代价
+│   └── 06_coordinating_conflicting_objectives.md       多目标协调 × 三种机制 × 选错机制=失败根源
 │
 ├── docs/                        工程知识库（项目全程原始记录）
 │   ├── README.md                          📑 docs 分层索引（主线 / 设计 / 交接归档 / 运行手册）
 │   ├── VERSION_MAP.md                     ⭐ 版本地图：v1→v6.10 一张表
 │   ├── MIGRATABLE_RLHF_PATTERNS.md        ⭐ 可迁移的 RLHF 判断框架（通用方法论）
+│   ├── chatjoy_eval_paradigm.md           评测范式：固定 probe + 统一 regex + 真破功去误报
 │   ├── project_chatjoy_overview.md       全链路总纲 + RM/GRPO 全记录 + 当前状态
 │   ├── training_runbooks.md              各阶段可直接运行的启动命令/超参/路径
 │   ├── chatjoy_business_ux_tech_mapping.md  8 维业务体验 → 技术手段映射
