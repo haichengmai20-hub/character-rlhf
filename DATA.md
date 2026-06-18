@@ -86,6 +86,9 @@
 |---|---|---|
 | `rich_cjk_sft_mix_v69_balanced.json` | 29,927 条 | v6.9 均衡 mix（en 12% + defense 10.2% 760×4 oversample + 格式 100%）；✅ 3 条样本入库 `data/samples/sft_v69_balanced_mix_sample3.json`（含 `richness_score` 字段） |
 | `rich_cjk_sft_mix_v69_final.json` | 24,518 条 | v6.9 best-of-N 选择器产物（动作+interaction/sensory/emotional 排序，独白不入目标防过冲） |
+| `rich_cjk_sft_mix_v69b.json` | 30,407 条 / 313 MB | v69b：balanced + defense supplement 120×4 oversample；仅记录 |
+| `rich_cjk_sft_repair_v69c.json` | 41 MB | v69c repair 数据；✅ sample 入库见下 |
+| `defense_supplement_v69c.jsonl` | 21 MB | v69c defense supplement；✅ `data/samples/defense_supplement_v69c_sample5.jsonl` |
 | `rich_v69_judged_only.jsonl` / `candidates_judged_only.jsonl` | — | judge 已打分的候选池（复用优先，零新增 judge） |
 | `bon_candidates_{zh_zhtw,ja_ko}.jsonl` | — | base 重采 N=8–10 的 best-of-N 候选 |
 
@@ -94,6 +97,9 @@
 - `training/sft_richness/` — `select_v69_balanced.py`（均衡选择器）、`bon_resample_v69.py`（best-of-N 重采）、`validate_gate_v68.py`（训练前 profile 硬门）、`run_v69_balanced_autoresume.sh`（remount shm + resume_from_checkpoint 自恢复 wrapper）
 - `training/sft_richness/probe_analysis/` — step0/step100/base/v68 三轴 held-out probe + 温度甜点扫（t0.8/0.85/0.9/1.0）+ 多样性分析 + RM 分语言打分脚本；**关键产物 `rm_scores.jsonl` / `rm_scores_hot.jsonl`**：clean/attack 分轴打分证「RM 是防御判别器，clean 质量轴几乎是平的」（clean 跨度 0.037 vs attack 跨度 0.36，差 ~10 倍）
 - `reports/sft_richness/` — v6.8 三份 probe 报告（heldout / rich_opening / 综合）+ CODEX 任务卡，记录 v6.8 失败归因（独白过冲 187%/对话回退/动作没动 → 弃用，重做 v6.9）
+- `reports/sft_richness/rl90_temp_sweep_report.md` — RL v6.10 step90 的部署参数 sweep：`temperature/top_p/presence/min_p` 均调不动真破功，最终服务参数定为 `t=0.8/top_p=0.95/presence=0.4/min_p=0`
+- `docs/rl_v610_step90_service_guide.md` — step90 merged 模型服务复现指南（vLLM/Gradio/GPU/公网隧道）
+- `docs/WORKSPACE_ARTIFACT_AUDIT_20260618.md` — 工作区产物补全审计，记录哪些文件全文入库、哪些 sample、哪些仅记录
 
 **合并模型（T3 — 仅记录，~49–52 GB/个）**
 
@@ -102,6 +108,19 @@
 | `sft_rich_cjk_v67_repair_merged_full` | 49 GB | v6.7 repair 后 actor（CJK 出厂均长 488 字、语言 55/55、破功 5/34） |
 | `sft_rich_cjk_v68_ffn_merged_full` | 52 GB | v6.8 FFN/router LoRA 合并（已弃用，留作 A/B 对照） |
 | `rl_v67_step100_merged` | 49 GB | v6.7 RL step100 合并（防御 +0.092 有效，clean 全平 = RM 无梯度） |
+| `sft_rich_cjk_v69c_repair_merged_full` | 49 GB | v69c repair 合并模型，作为 v6.10 RL actor 起点 |
+| `rl_v610_step90_merged` | 49 GB | v6.10 step90 合并模型；服务配置见 `docs/rl_v610_step90_service_guide.md` |
+
+**评测样本（✅ 入库 `data/samples/`）**
+
+| 文件 | 来源 | 用途 |
+|---|---|---|
+| `v69c_clean200_sample5.jsonl` | `/root/rich_cjk_sft_v69/v69c_clean200.jsonl` | v69c clean probe 样例 |
+| `v69c_attack_probe_sample5.jsonl` | `/root/rich_cjk_sft_v69/v69c_attack_probe.jsonl` | v69c attack probe 样例 |
+| `v69c_attack_rm_sample5.jsonl` | `/root/rich_cjk_sft_v69/v69c_attack_rm.jsonl` | v69c attack RM 打分样例 |
+| `rl90_clean_temp_sweep_sample5.jsonl` | `/root/rich_cjk_sft_v69/clean_rl90_t08_tp095_pr02_mp005.jsonl` | step90 采样 sweep clean 样例 |
+| `rl90_attack_temp_sweep_sample5.jsonl` | `/root/rich_cjk_sft_v69/attack_rl90_t08_tp095_pr02_mp005.jsonl` | step90 采样 sweep attack 样例 |
+| `defense_supplement_v69c_sample5.jsonl` | `/root/rich_cjk_sft_v69/defense_supplement_v69c.jsonl` | v69c defense supplement 样例 |
 
 > 验证策略（零 merge 筛选）：训完后 vLLM `--enable-lora` 直挂 adapter 筛 ckpt，只对赢家做 merge（merge ~49 GB 仅做一次）。
 

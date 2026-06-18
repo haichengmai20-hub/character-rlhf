@@ -3,7 +3,7 @@
 > **这是什么**：一份让**另一个 AI** 从本仓库现有素材出发、构造一套**产品业务 benchmark** 的落地指导。不是再发明指标，而是把仓库里已经验证过的评测范式、攻击词典、8 维业务体验、探针脚本，组装成一个**可复现、可回归、可对外汇报**的业务 benchmark 套件。
 >
 > **给谁**：负责构造 benchmark 的执行方（人或 AI）。读完应能直接产出数据文件 + 打分 harness + scorecard。
-> **依据（都在本仓库）**：[业务 8 维](../docs/chatjoy_business_ux_tech_mapping.md) · [评测范式](../docs/chatjoy_eval_paradigm.md) · [攻击词典方案](../reports/attack_dict_proposal_for_product.md) · 探针脚本 [`training/sft_richness/gen_clean_probe.py`](../training/sft_richness/gen_clean_probe.py)/`gen_attack_probe.py`/`detect_ooc.py` · 外部学术基准 [RMTBENCH](RMTBENCH/README.md) · 深读 [04](../deep_dives/04_richness_defense_tension_and_sft_ceiling.md)/[05](../deep_dives/05_when_to_move_from_sft_to_rl.md)/[06](../deep_dives/06_coordinating_conflicting_objectives.md)。
+> **依据（都在本仓库）**：[业务 8 维](../docs/chatjoy_business_ux_tech_mapping.md) · [评测范式](../docs/chatjoy_eval_paradigm.md) · [攻击词典方案](../reports/attack_dict_proposal_for_product.md) · 探针脚本 [`training/sft_richness/gen_clean_probe.py`](../training/sft_richness/gen_clean_probe.py)/`gen_attack_probe.py`/`detect_ooc.py` · 外部学术基准 [RMTBENCH](RMTBENCH/README.md) · 深读 [04](../deep_dives/04_richness_defense_tension_and_sft_ceiling.md)/[05](../deep_dives/05_when_to_move_from_sft_to_rl.md)/[06](../deep_dives/06_coordinating_conflicting_objectives.md)/[07](../deep_dives/07_business_benchmark_and_evidence_preservation.md)。
 
 ---
 

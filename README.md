@@ -53,6 +53,7 @@
 | 4 | [Clean 富化为何侵蚀防御 + SFT 天花板](deep_dives/04_richness_defense_tension_and_sft_ceiling.md) | 一组反直觉数字（step0 16.2% → 富化 40% → 补 defense 仍 33.8%）**拆成两个互斥假说，用数据判真伪** | 数据覆盖稀释 vs 行为表征冲突两假说 · unique defense 120→2686（22×）真破功不降反升=Pareto 碰壁 · 真代码 5→9→11 / 真身份 6→13→12 分类归因 · **否决"teacher 产不出 defense"**（49 条 A6 正样本 0% 含代码、78.8% in-char 良率）· 三处与上游文档不一致的数据自纠 |
 | 5 | [何时从 SFT 转向 RL：入口门判据](deep_dives/05_when_to_move_from_sft_to_rl.md) | 把"该不该起 RL"拆成四道可证伪的门，**每道门配一次违反它的真实代价** | 门 A 评测能否看见失败（v6.5 375 步空转）· 门 B RM 目标轴有无梯度（分轴方差 0.037 vs 0.36）· 门 C 残余失败是否 SFT 不可约（加数据看斜率）· 门 D RL 的代价非零（base 27%→RL 55% 把防御训坏 / 温度脆 / canary 门）· 决策树 + RL 有用的充要条件 |
 | 6 | [多目标协调：三种机制消解冲突](deep_dives/06_coordinating_conflicting_objectives.md) **(capstone)** | 把 clean/attack/动作/语义等冲突目标归到 RLHF 仅有的**三种协调机制**，证明失败=选错机制 | 机制①阶段分配（富度→SFT/防御→RL）· 机制②阶段内聚合**加权和 vs 字典序门控**（v6.8 选择器放大独白 187% / anti_refusal 把"约束"塞进加权和→反向奖励破功）· 机制③ per-source 解耦（clean KL 0.008 / attack 0.002，守富度⇄改防御）· 冲突越深叠的机制越多（富度⇄防御=三层叠加）· 决策表 + 一页速查 |
+| 7 | [业务 Benchmark 与证据留存](deep_dives/07_business_benchmark_and_evidence_preservation.md) | 把 benchmark 从"prompt 集"提升为**产品决策仪表盘 + 同尺协议 + 证据留存系统** | RMTBENCH 外部锚 vs 业务 benchmark 上线门 · L1/L2/L3/L4/L5 分层打分边界 · 为什么 step90 采样 sweep 证明问题在训练层 · 工作区 v69/v6.10 证据如何全文/sample/索引化入库 |
 
 ---
 
@@ -134,7 +135,8 @@ chatjoy-character-rlhf/
 │   ├── 03_rl_dynamics_params_and_strategy.md           RL 参数原理 × 动态趋势观察 × 策略应对
 │   ├── 04_richness_defense_tension_and_sft_ceiling.md  富化为何侵蚀防御 × 双假说判真伪 × SFT 天花板
 │   ├── 05_when_to_move_from_sft_to_rl.md                何时转 RL × 四道入口门 × 过早起 RL 的代价
-│   └── 06_coordinating_conflicting_objectives.md       多目标协调 × 三种机制 × 选错机制=失败根源
+│   ├── 06_coordinating_conflicting_objectives.md       多目标协调 × 三种机制 × 选错机制=失败根源
+│   └── 07_business_benchmark_and_evidence_preservation.md  业务 benchmark × 同尺协议 × 证据留存
 │
 ├── docs/                        工程知识库（项目全程原始记录）
 │   ├── README.md                          📑 docs 分层索引（主线 / 设计 / 交接归档 / 运行手册）

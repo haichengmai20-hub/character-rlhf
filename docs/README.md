@@ -14,6 +14,7 @@
 | [chatjoy_eval_paradigm.md](chatjoy_eval_paradigm.md) | 评测范式：固定 probe 集 + 统一 regex 重算 + 真破功去误报（深读 4/5 的口径来源）|
 | [project_chatjoy_overview.md](project_chatjoy_overview.md) | 全链路总纲 + RM/GRPO 全记录（早期至 v6.5 战略转向）|
 | [training_runbooks.md](training_runbooks.md) | 各阶段可直接运行的启动命令 / 超参 / 路径（复现入口）|
+| [rl_v610_step90_service_guide.md](rl_v610_step90_service_guide.md) | RL v6.10 step90 merged 模型服务指导：环境、硬件、vLLM/Gradio 参数、公网隧道 |
 
 > 仓库根目录的 [README](../README.md) / [CASE_STUDY](../CASE_STUDY.md) / [RLHF_WORKFLOW](../RLHF_WORKFLOW.md) / [deep_dives](../deep_dives/) 是更高层的主线，本目录是其支撑材料。
 
@@ -37,12 +38,14 @@
 | [chatjoy_rl_handoff_vs_current_status.md](chatjoy_rl_handoff_vs_current_status.md) | RL 交接 vs 当前状态对照 |
 | [chatjoy_rl_takeover_error_fix_log.md](chatjoy_rl_takeover_error_fix_log.md) | RL 接手错误修复全记录（调试日志）|
 | [MEMORY_INDEX.md](MEMORY_INDEX.md) | 工作区记忆索引镜像（含历史 banner，数字以仓库主线/深读为准）|
+| [HANDOFF_next_training_quality.md](HANDOFF_next_training_quality.md) | step90 质量审查后，下一轮 quality-aware 训练路线 |
 
 ## 🔎 元 / 审阅
 
 | 文件 | 内容 |
 |---|---|
 | [project_readability_and_rlhf_workflow_review.md](project_readability_and_rlhf_workflow_review.md) | 仓库治理与可读性审阅建议（本目录的整理依据）|
+| [WORKSPACE_ARTIFACT_AUDIT_20260618.md](WORKSPACE_ARTIFACT_AUDIT_20260618.md) | 2026-06-18 工作区产物补全审计：哪些全文入库、哪些 sample、哪些仅记录 |
 
 ---
 
