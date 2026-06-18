@@ -144,14 +144,61 @@ mount -o remount,size=2G /dev/shm
 
 ## 3. vLLM 显存模型与 cumem 踩坑实录（本篇最深的一节）
 
-### 3.1 核心心智模型：`gpu_memory_utilization` 是**虚拟地址预留**
+### 3.1 先把上下文账算清：context length、KV cache 与 PagedAttention
+
+服务侧最容易被低估的账不是模型权重，而是 **KV cache**。对一个自回归 Transformer 来说，解码第 `t` 个 token 时，每一层都要复用前 `1..t-1` 个 token 的 key/value；因此只要请求还在生成，KV 就必须常驻显存。
+
+粗略心智模型：
+
+```
+KV 显存 ∝ layers × kv_heads × head_dim × (prompt_tokens + generated_tokens)
+          × concurrent_sequences × dtype_bytes
+```
+
+也就是说，`max_model_len` 不是一个"无害的最大长度配置"。它定义的是每条请求可能占用的上下文上限：
+
+```
+context length = prompt tokens + generated tokens
+```
+
+在 ChatJoy 的服务和 rollout 里，`max_model_len=4096/8192`、`max_tokens=768/1024/1536`、`max_num_seqs`、`ROLLOUT_N` 四个量会一起决定 KV 压力：
+
+- `max_model_len` 决定单条请求可到多长；
+- `max_num_seqs` 决定同一时刻最多多少条请求占 KV；
+- `max_tokens` 决定实际生成会把上下文推多远；
+- `ROLLOUT_N` 在 RL 里把每个 prompt 扩成多条 response，间接增加调度与 KV 峰值。
+
+**PagedAttention 的作用**：vLLM 不再为每条请求按最大长度预留一整块连续 KV，而是把 KV cache 切成 page/block 管理。短请求只占少量页，长请求随着生成追加页；不同请求的页可以在统一 KV block pool 里调度、复用、释放。这解决了两个传统 serving 痛点：
+
+1. 避免"每条请求都按最大长度开一整块连续显存"造成的浪费；
+2. 降低长短请求混跑时的碎片化，让 batch scheduler 可以更稳定地塞满 GPU。
+
+但 PagedAttention **不会让 KV 免费**。vLLM 仍然会从 `gpu_memory_utilization` 预算里切出一池 KV blocks。日志里这三行就是最直接的 KV 账：
+
+```text
+Available KV cache memory: 13.96 GiB
+GPU KV cache size: 243,904 tokens
+Maximum concurrency for 8,192 tokens per request: 79.06x
+```
+
+这意味着：在该服务配置下，vLLM 能用于 KV 的池子约 13.96GiB，换算成 243,904 个 token 的 KV 容量；如果每条请求都跑满 8192 context，理论并发约 79 条。真实并发还会被 `max_num_seqs`、prefill chunk、调度开销和 CUDA context 限制。
+
+**为什么这对本项目重要**：
+
+- demo/产品服务为了长角色扮演把 `max_model_len` 提到 8192，同时用 `max_num_batched_tokens=1024` 开 chunked prefill，把长 prompt 的 prefill 拆块，避免 prefill 阶段一次性把显存和 scheduler 打爆；
+- RL rollout 更危险，因为 actor FSDP 和 vLLM 同卡。PagedAttention 降低了 KV 浪费，但 `gpu_memory_utilization × 31.36GB` 的 vLLM 预算仍会和 FSDP shard、NCCL buffer、CUDA context 争同一张卡；
+- 所以 `max_num_seqs 32→24/8`、`max_model_len 8192→4096/2816` 这类调参，本质是在收缩 KV block pool 的需求，不是"随便降一点并发"。
+
+一句话：**PagedAttention 是 vLLM 能高效服务长上下文的原因，但长上下文本身的 KV 账仍必须按 tokens × concurrency 算。**
+
+### 3.2 核心心智模型：`gpu_memory_utilization` 是**虚拟地址预留**
 
 实测得出的最重要认识（vLLM V1 cumem allocator）：
 
 > `sleep(level=1)` 只 unmap **物理页**，`gpu_memory_utilization × 31.36GB` 的**虚拟地址段始终被 vLLM 进程占住**。
 > 所以 FSDP 与 vLLM 共享物理卡时，**峰值 = vLLM 虚拟预算 + FSDP shard + 多进程 overhead** —— 不能想当然认为"vLLM 睡了显存就还回来了"。
 
-### 3.2 三档 `ROLLOUT_GPU_MEMORY_UTILIZATION` 复测：三个值、三种死法（每个都能用账解释）
+### 3.3 三档 `ROLLOUT_GPU_MEMORY_UTILIZATION` 复测：三个值、三种死法（每个都能用账解释）
 
 | 设置 | 结果 | 死在哪 | 账 |
 |---|---|---|---|
@@ -161,7 +208,7 @@ mount -o remount,size=2G /dev/shm
 
 → 三档全崩说明**不是调参问题，是结构问题**：peak 时 FSDP 和 vLLM 同时在卡上。
 
-### 3.3 结构性修复：把"同时在卡"改成"串行换防"
+### 3.4 结构性修复：把"同时在卡"改成"串行换防"
 
 重排 verl `engine_workers.update_weights()` 的顺序（配合日志埋点核账）：
 
@@ -175,16 +222,16 @@ mount -o remount,size=2G /dev/shm
 配套手段（按账排出的降显存阶梯，**一次只动一项，否则无法归因**）：
 `max_num_seqs 32→8`（KV 最小需求 = seqs × max_model_len）→ 压 `MAX_PROMPT/RESPONSE_LENGTH`（max_model_len = 两者之和，KV 按它分块）→ `ROLLOUT_N 4→2` → `micro_batch 2→1` → `PPO_MAX_TOKEN_LEN 8192→4096` → FP8 KV → 改 colocate 架构。
 
-### 3.4 两个"深水区"根因（值得单独记）
+### 3.5 两个"深水区"根因（值得单独记）
 
 **A. LoRA 热更新 `illegal memory access`**：vLLM punica 的 `lora_a_stacked/lora_b_stacked` buffer 被分配进 cumem 的 `weights` tag → `sleep(level=1, offload_tags=("weights",))` 把它们一起 unmap → 下次 `set_lora` 命中已 unmap 区间 → `CUDA error: invalid argument / illegal memory access`。**错的是指针不是形状**（这解释了为什么改 rank/模块都没用）。修复：任意 sleep 模式都 `resume(tags=["weights"])`。
 
 **B. `lora.merge=True` 路径为什么在本机永不可行**（排除清单，防止后人重试）：
 - FSDP1：`summon_full_params` 要把 25.84B bf16 = **51.7GB 拉到单 rank** → 31.36GB 装不下；
 - FSDP2：Gemma4 是 **128-expert MoE**，wrap targets 遍历 ~35 万个子模块 init 卡死 5min+，且 `load_full_state_dict` 仍要 rank0 装 52GB。
-→ 只能走 hot-swap（merge=False），所以 3.4A 的 cumem 问题**必须**解决，绕不开。
+→ 只能走 hot-swap（merge=False），所以 3.5A 的 cumem 问题**必须**解决，绕不开。
 
-### 3.5 资源隔离的一个轻量技巧：`CUDA_VISIBLE_DEVICES` 重映射
+### 3.6 资源隔离的一个轻量技巧：`CUDA_VISIBLE_DEVICES` 重映射
 
 物理 GPU0 长期被别的进程占 1.9GB → 不改 verl 资源池代码，启动时 `CUDA_VISIBLE_DEVICES=4,5,6,7,0,1,2,3`：verl 眼中的 actor pool（逻辑 0-3）落到干净的物理 4-7，RM pool（容忍 squatter）落到物理 0-3。**用环境变量做了一次零代码的资源调度。**
 

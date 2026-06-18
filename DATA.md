@@ -15,7 +15,7 @@
 | **T1 小样本** | 几条 SFT / test / 角色卡 / dataset 注册表 | ✅ 样本 | `data/samples/`、`characters_samples/` |
 | **T2 训练数据集** | SFT / 多语言 / 偏好对（MB–GB 级） | ❌ 仅记录 | 本文件 §1–§3 |
 | **T3 模型权重** | 基座 / SFT / RM / 合并 actor（数十 GB） | ❌ 仅记录 | 本文件 §4 |
-| **T4 评测产物** | evaluation CSV / 训练日志 | ❌ 仅记录 | 本文件 §5 |
+| **T4 评测产物** | evaluation CSV / 训练日志 | ⚠️ 原始大日志仅记录；小摘录入库 | 本文件 §5 |
 
 ---
 
@@ -72,9 +72,15 @@
 
 > ⚠️ Gemma4 纯文本 merge 后被 vLLM/verl 加载的两个坑：(a) merge 必须 `force_text_only`；(b) 加载须补回 `vision_config` + 启动带 `--limit-mm-per-prompt '{"image":0,"video":0}'`。详见 `docs/project_chatjoy_overview.md`。
 
-## §5. 评测产物（T4 — 仅记录）
+## §5. 评测产物与框架日志（T4 — 原始大文件仅记录）
 
 `evaluation_report_jsonl*.csv`（baseline / dpo / v1_gemini / v6_gemini_cot 等，最大 ~5 MB）、`logs/`、`outputs/`、`plots/`、`confusion_matrix.png`、`consensus_moe_report.csv`。评测脚本 ✅ 入库（`training/data_prep/` 的 `analyze_*.py`、`evaluate*.py`）。
+
+**框架运行日志策略**：原始 vLLM / verl / LlamaFactory 训练日志不直接入库，避免 Git 体积膨胀和临时链接/环境变量泄漏；仓库保留：
+
+- [docs/FRAMEWORK_RUNTIME_LESSONS.md](docs/FRAMEWORK_RUNTIME_LESSONS.md) — 从日志提炼的 vLLM / verl / LlamaFactory 运行知识；
+- [reports/framework_logs/LOG_EVIDENCE_INDEX.md](reports/framework_logs/LOG_EVIDENCE_INDEX.md) — 原始日志路径、大小级别、用途索引；
+- [reports/framework_logs/excerpts/](reports/framework_logs/excerpts/) — 可公开的脱敏关键片段。
 
 ## §6. v6.6b–v6.10 富化/防御轮（T2/T3 — 数据仅记录，脚本与报告 ✅ 入库）
 
