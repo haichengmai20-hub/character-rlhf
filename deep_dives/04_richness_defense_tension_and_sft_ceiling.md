@@ -4,6 +4,9 @@
 >
 > 数字来源：`v69_reconcile_report.md` 三方真破功表 + `chatjoy_eval_paradigm.md`（step0/v69b/v69c 为统一 regex 去 echo/code 误报后的**真破功率**；v6.9 一列只有 raw，未单独做去误报重算，已标注）。模型版本编年见 [docs/chatjoy_rl_v610_defense_clean_aware_design.md](../docs/chatjoy_rl_v610_defense_clean_aware_design.md)。
 
+> ## Attribution Lens
+> 本篇把"富化侵蚀防御"的残余失败归因到 **data distribution / SFT 范式的结构性天花板**（不是数据量：unique defense 22× 而破功率不降）。这也解释了为什么下一步交给 RL——但 RL 能不能修，取决于 [深读 8](08_credit_assignment_in_character_rlhf.md) 的 group/source/span 层 credit 是否到位。
+
 ---
 
 ## 0. 现象：三轮干预的真实数字

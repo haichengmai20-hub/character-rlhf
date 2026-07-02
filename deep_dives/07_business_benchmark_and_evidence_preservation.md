@@ -4,6 +4,9 @@
 
 关联文档：[业务 benchmark 构造指导](../benchmarks/BUSINESS_BENCHMARK_GUIDE.md) · [评测范式](../docs/chatjoy_eval_paradigm.md) · [RMTBENCH](../benchmarks/RMTBENCH/README.md) · [深读 4](04_richness_defense_tension_and_sft_ceiling.md) · [深读 5](05_when_to_move_from_sft_to_rl.md) · [深读 6](06_coordinating_conflicting_objectives.md)。
 
+> ## Attribution Lens
+> 本篇把观察到的行为主要归因到 **evaluation protocol**（同尺协议、去误报检测器、证据留存）：当 benchmark 结论与人工抽读冲突时，先怀疑尺子而非模型。这也是 [深读 8](08_credit_assignment_in_character_rlhf.md) 中 batch/source 层 credit 的前置条件——评测覆盖为零的失效，训练里也拿不到 credit。
+
 ---
 
 ## 0. 先给结论：benchmark 在本项目里不是"排行榜"，而是"决策仪表盘"

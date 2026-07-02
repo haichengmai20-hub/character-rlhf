@@ -4,6 +4,9 @@
 >
 > 配套代码全部在 [training/GRPO_Training_Package/](../training/GRPO_Training_Package/)。
 
+> ## Attribution Lens
+> 本篇把观察到的行为主要归因到 **reward model 与 rule reward**（偏好数据构造、RM 判别边界、奖励组件方向），兼及 **data distribution**（三类单因负样本）。其中"反向破角"一节，用 [深读 8](08_credit_assignment_in_character_rlhf.md) 的语言就是 **reward-component credit 分错**——功劳记在了错误组件上。
+
 ---
 
 ## 1. 偏好对构造：负样本是"造"出来的，且每一类都带可检验的信号

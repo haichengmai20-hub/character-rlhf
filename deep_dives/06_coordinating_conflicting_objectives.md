@@ -4,6 +4,9 @@
 >
 > 这是 [深读 2–5](.) 的 capstone：前面分别讲 RM、RL 动力学、富化-防御张力、何时转 RL；本篇把它们放进同一张多目标协调的框架里。数字均来自仓库内可核对记录（`CASE_STUDY.md` / `v69_reconcile_report.md` / 各设计文档）。
 
+> ## Attribution Lens
+> 本篇把失败归因到"**选错了协调机制层**"：机制①阶段分配≈**data/SFT vs GRPO** 的分工、机制②阶段内聚合≈**reward 组件**的加权/门控、机制③per-source 解耦≈**source 层**分路。这三层与 [深读 8](08_credit_assignment_in_character_rlhf.md) 的 credit 层级一一对应——协调机制选错，本质就是 credit 分到了错误的层。
+
 ---
 
 ## 0. 角色模型至少有 5 个互相拉扯的目标

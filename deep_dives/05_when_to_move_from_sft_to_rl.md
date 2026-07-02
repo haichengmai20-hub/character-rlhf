@@ -4,6 +4,9 @@
 >
 > 所有数字来自工作区真实文件：`v69_reconcile_report.md`（三方真破功）、`docs/chatjoy_rl_v610_defense_clean_aware_design.md` §0、`CASE_STUDY.md`（v6.5 归因）、`/root/rich_cjk_sft_v69/` 下的 probe 数据与 build 脚本。与既有运行手册 [RLHF_WORKFLOW.md](../RLHF_WORKFLOW.md) §8.1 的区别：那里是"怎么执行入口门"的 runbook，本篇是"为什么是这几道门、每道门背后的数据机制"。
 
+> ## Attribution Lens
+> 本篇的四道入口门本质是"把一次 RL 失败归因到哪一层"的判据：门 A=**evaluation protocol**、门 B=**reward model**（目标轴方差）、门 C=**data distribution**（SFT 可约性）、门 D=**GRPO optimization** 的代价。[深读 8](08_credit_assignment_in_character_rlhf.md) 在门 B 之后补了一道 **Gate E（credit 能否定位到真正错误行为）**——本项目 v6.10 正是 A/B/C 齐过却卡在 Gate E。
+
 ---
 
 ## 0. 反直觉的起点：RL 曾把防御训得比 base 还差

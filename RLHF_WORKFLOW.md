@@ -532,6 +532,24 @@ vLLM 权重（虚拟地址预留，睡眠时 0）：12.2GB 预留
 
 ---
 
+## Credit Assignment 视角：把上述阶段错配读成一条主线
+
+> 本节是对全流程的一个归因补充，完整分析见 [深读 8 — Character RLHF 中的 Credit Assignment](deep_dives/08_credit_assignment_in_character_rlhf.md)。
+
+前面的每个阶段，reward 都是 **sequence-level**（RM + rule reward 给整条回复一个标量），而 GRPO 的 actor 更新发生在 **token-level** logprob 上。这个错配把上面几处失败串成同一条线：
+
+| 现象（本文档章节） | 错配落在哪一层 | 归因 | 版本对比 | 工程决策 |
+|---|---|---|---|---|
+| anti_refusal +3.0 反向破角（Stage 4.2） | 组件 / sequence | credit 分给了错误 reward 组件与破角 span | base 27% → RL 55%/91% | anti-OOC 硬罚 -5 + 撤销 bonus，重排优先级 |
+| clean RL 提不动（Stage 4.3 / 钥匙 2） | group | clean 跨度 0.037 → group 无方差 → advantage≈噪声 | clean 0.037 vs attack 0.36 | 富度归 SFT、防御归 RL |
+| length hacking（Stage 5.2） | token | 正 advantage 逐 token 生效，长序列垄断 credit 质量 | 有无 GSPO | GSPO 序列级等权 + MAX_LEN=768 |
+| clean/attack 混训（Stage 8.2） | source | 两源 credit 混叠，attack 更新会带跑 clean | 全局 KL vs per-source KL | per-source KL（clean 0.008 / attack 0.002） |
+| v6.10 attack 未降（Stage 8） | token / span | -5 仍是整条的，无法定位破角 span | v6.9c 33.8% vs v6.10 36.8% | 停线，转 RM v7 / span 级 credit（proposed） |
+
+**下一步该动哪一层**：不是"再 RL 几步"，而是把 credit 从 sequence 下沉到 span（proposed diagnostic，未跑实验）——这正是深读 8 的 Gate E 与 §4.5 的结论。
+
+---
+
 ## 一句话方法论
 
 能力目标决定评估协议，评估协议决定数据构造，数据构造决定 RM 设计，RM 设计决定 RL 奖励有没有梯度——**每一步都是上一步归因后的唯一合理答案，不是超参数调优**。

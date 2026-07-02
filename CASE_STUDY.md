@@ -201,4 +201,20 @@ total_reward = rm_score                       # v5/v6.3 RM，[-, +] 主信号（
 
 ---
 
+## 6. 再归一层：这七个循环共享同一个 credit assignment 错配
+
+> 本节是对上面七个归因循环的一个统一视角，完整分析见 [深读 8 — Character RLHF 中的 Credit Assignment](deep_dives/08_credit_assignment_in_character_rlhf.md)。
+
+把 §1 的七个循环重排一遍会发现：其中最关键的几次（节点 5 反向破角、节点 7 RL 到顶）不是"reward 缺失"，而是 **reward 是 sequence-level、GRPO 更新是 token-level** 这个层级错配的不同表现。
+
+| 现象 | 错配层 | 归因 | 版本对比 | 决策 |
+|---|---|---|---|---|
+| 节点 5：reward-hacking 反向破角 | 组件 / sequence | +3.0 bonus 把 credit 分给破角式"非拒绝" | base 27% → RL 55% | anti-OOC 硬罚 -5，重排优先级 |
+| 节点 4：length hacking 预防 | token | 长回复 → 更多 token 拿正 credit | RM 长度分桶曲线 | 5 层防护（含 GSPO/截断） |
+| 节点 7：RL 到顶战略转向 | group / source | clean 无方差（0.037）+ val≠产品分布 | clean vs attack 轴 | 停 RL，回数据/信号层 |
+
+**这一层的价值**：它把"我做了 SFT/RM/RL"升级为"我能判断一次 RL 失败到底是 reward 组件、group 方差、source 覆盖还是 token/span 定位的问题"——即从"跑算法"上升到"构造并验证一个 credit 能正确落地的可优化信号"。
+
+---
+
 > 想看完整时间线与每个 bug 的修复链：[docs/project_chatjoy_overview.md](docs/project_chatjoy_overview.md)；想看可运行命令/超参：[docs/training_runbooks.md](docs/training_runbooks.md)；想看完整数据/模型清单：[DATA.md](DATA.md)。

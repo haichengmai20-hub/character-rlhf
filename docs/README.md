@@ -42,6 +42,18 @@
 | [MEMORY_INDEX.md](MEMORY_INDEX.md) | 工作区记忆索引镜像（含历史 banner，数字以仓库主线/深读为准）|
 | [HANDOFF_next_training_quality.md](HANDOFF_next_training_quality.md) | step90 质量审查后，下一轮 quality-aware 训练路线 |
 
+## 🔬 后训练研究上下文（面试复盘 / 研究资产）
+
+> 这几篇是把项目抽象成"后训练算法研究"的上下文层，也是 [深读 8](../deep_dives/08_credit_assignment_in_character_rlhf.md) 的概念底稿。它们不追加实验，只固定算法链路、变量层级与 credit assignment 框架。
+> [深读 9 — 全链路差分归因](../deep_dives/09_full_chain_attribution.md) 是深读 8 的**后向配套**：把"指标没提升 / 上线不行"逐层归因到评测 / 数据 / SFT / RM / reward 规则 / RL 参数 / credit / 采样，每层配一个最小判别实验。
+
+| 文件 | 内容 |
+|---|---|
+| [CREDIT_ASSIGNMENT_TAXONOMY.md](CREDIT_ASSIGNMENT_TAXONOMY.md) | Credit assignment 六层（token/span/sequence/group/source/batch）的定义、失败模式、诊断口径 —— [深读 8](../deep_dives/08_credit_assignment_in_character_rlhf.md) 的概念底稿 |
+| [GRPO_LOGPROB_FLOW.md](GRPO_LOGPROB_FLOW.md) | old/new/ref logprob、reward、advantage、KL、actor update 的计算顺序（不依赖具体框架）|
+| [RL_RESEARCH_INDEX.md](RL_RESEARCH_INDEX.md) | SFT/RM/PPO/GRPO/DPO/RLVR/Agentic RL/Eval/Deploy 的导航索引 |
+| [GPT_CONTEXT_DISTILLED.md](GPT_CONTEXT_DISTILLED.md) | 项目后训练研究上下文的提炼版（定位、算法解释、核心发现）|
+
 ## 🔎 元 / 审阅
 
 | 文件 | 内容 |

@@ -4,6 +4,9 @@
 >
 > 所有 val 数字来自真实训练日志；完整时间线见 [docs/chatjoy_rm_v6_3_roledrop_handoff.md](../docs/chatjoy_rm_v6_3_roledrop_handoff.md)。
 
+> ## Attribution Lens
+> 本篇把每次趋势异常在 **GRPO optimization**（参数、KL/clip/温度、动态指标）与 **rule reward** 之间定位：判断"平台/尖峰/零移动"到底是优化器问题还是信号问题。GSPO/per-source KL 等参数选择，从 [深读 8](08_credit_assignment_in_character_rlhf.md) 看正是 token 层与 source 层的 credit 干预。
+
 ---
 
 ## 1. 算法选型与原理

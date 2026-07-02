@@ -18,6 +18,7 @@
 | **30 分钟** | README → [CASE_STUDY](CASE_STUDY.md) → [深读 5：何时从 SFT 转 RL](deep_dives/05_when_to_move_from_sft_to_rl.md) | 面试官 / 技术评审 |
 | **2 小时** | ＋ [RLHF_WORKFLOW](RLHF_WORKFLOW.md) ＋ [深读 1–6](deep_dives/)（6 是 capstone） | 关心 RLHF 方法论的人 |
 | **复现向** | [DATA.md](DATA.md) → [training/README](training/README.md) → [docs/training_runbooks](docs/training_runbooks.md) | 工程复现（先看复现边界）|
+| **面试准备** | [INTERVIEW_SCRIPT](INTERVIEW_SCRIPT.md)（L0 电梯 → L1 主线 → L2 全仓库导读 → L3 难住追问） | 本人复习热身 / 面试官提问参考 |
 
 > 想直接拿走可迁移的方法（其他角色/陪伴/客服模型通用）：[docs/MIGRATABLE_RLHF_PATTERNS.md](docs/MIGRATABLE_RLHF_PATTERNS.md)。
 
@@ -54,6 +55,8 @@
 | 5 | [何时从 SFT 转向 RL：入口门判据](deep_dives/05_when_to_move_from_sft_to_rl.md) | 把"该不该起 RL"拆成四道可证伪的门，**每道门配一次违反它的真实代价** | 门 A 评测能否看见失败（v6.5 375 步空转）· 门 B RM 目标轴有无梯度（分轴方差 0.037 vs 0.36）· 门 C 残余失败是否 SFT 不可约（加数据看斜率）· 门 D RL 的代价非零（base 27%→RL 55% 把防御训坏 / 温度脆 / canary 门）· 决策树 + RL 有用的充要条件 |
 | 6 | [多目标协调：三种机制消解冲突](deep_dives/06_coordinating_conflicting_objectives.md) **(capstone)** | 把 clean/attack/动作/语义等冲突目标归到 RLHF 仅有的**三种协调机制**，证明失败=选错机制 | 机制①阶段分配（富度→SFT/防御→RL）· 机制②阶段内聚合**加权和 vs 字典序门控**（v6.8 选择器放大独白 187% / anti_refusal 把"约束"塞进加权和→反向奖励破功）· 机制③ per-source 解耦（clean KL 0.008 / attack 0.002，守富度⇄改防御）· 冲突越深叠的机制越多（富度⇄防御=三层叠加）· 决策表 + 一页速查 |
 | 7 | [业务 Benchmark 与证据留存](deep_dives/07_business_benchmark_and_evidence_preservation.md) | 把 benchmark 从"prompt 集"提升为**产品决策仪表盘 + 同尺协议 + 证据留存系统** | RMTBENCH 外部锚 vs 业务 benchmark 上线门 · L1/L2/L3/L4/L5 分层打分边界 · 为什么 step90 采样 sweep 证明问题在训练层 · 工作区 v69/v6.10 证据如何全文/sample/索引化入库 |
+| 8 | [Character RLHF 中的 Credit Assignment](deep_dives/08_credit_assignment_in_character_rlhf.md) | 把项目几次成败**重新读成对 sequence→token credit 错配某一层的回应**：GRPO 给方向，credit 决定方向落在破角 span 还是整条回复/错误组件/错误 source | 反向破角=组件层 credit 分错（base 27%→RL 55%）· clean 提不动=group 层无方差（跨度 0.037）· length hacking=token 层长度泄漏 · per-source KL=项目已建的 source 层 credit 干预 · v6.10 attack 压不动=token/span 层仍缺位 · 新增 Gate E · 迁移到 Agentic trajectory credit（新诊断均标 proposed）|
+| 9 | [全链路差分归因](deep_dives/09_full_chain_attribution.md) | 指标没提升/上线不行时，用**差分诊断**把根因判给正确的一层：同一症状、8 个候选病因、每个配一个比重训便宜几个数量级的**最小判别实验** | 四次"指标没动"归到四个不同层（v6.5 评测盲区 / v6.7 RM 无方差 / v6.8 数据放大 / v6.10 credit 缺位，归因到 RL 算法命中率 0/4）· 易混病因对判别关键（RM 无方差 vs credit 无定位 / 数据可补 vs SFT 到顶 / RL 参数 vs credit）· 排查流程图（深读 5 的后向镜像）· 新诊断均标 proposed |
 
 ---
 
@@ -130,6 +133,7 @@ chatjoy-character-rlhf/
 ├── LICENSE                      版权声明（All Rights Reserved，作品集参考用途）
 ├── CASE_STUDY.md                ⭐ 闭环叙事：7 个归因循环（业务→数据→训练→归因→再迭代，收在 v6.5 战略转向）
 ├── DATA.md                      ⭐ 完整数据/模型分层清单（哪些入库、哪些只记录）
+├── INTERVIEW_SCRIPT.md          面试口述脚本（L0/L1/L2 全仓库导读 + L3 难住追问 × 12）
 │
 ├── deep_dives/                  ⭐⭐ 能力深读（本仓库主菜）
 │   ├── 01_memory_accounting_and_gpu_communication.md   显存算账 × ZeRO × 通信原语 × vLLM/cumem
@@ -138,7 +142,9 @@ chatjoy-character-rlhf/
 │   ├── 04_richness_defense_tension_and_sft_ceiling.md  富化为何侵蚀防御 × 双假说判真伪 × SFT 天花板
 │   ├── 05_when_to_move_from_sft_to_rl.md                何时转 RL × 四道入口门 × 过早起 RL 的代价
 │   ├── 06_coordinating_conflicting_objectives.md       多目标协调 × 三种机制 × 选错机制=失败根源
-│   └── 07_business_benchmark_and_evidence_preservation.md  业务 benchmark × 同尺协议 × 证据留存
+│   ├── 07_business_benchmark_and_evidence_preservation.md  业务 benchmark × 同尺协议 × 证据留存
+│   ├── 08_credit_assignment_in_character_rlhf.md        sequence→token credit 错配 × 六层归因 × 对项目成败的实际影响
+│   └── 09_full_chain_attribution.md                     全链路差分归因 × 8 候选病因 × 最小判别实验 × 排查流程图
 │
 ├── docs/                        工程知识库（项目全程原始记录）
 │   ├── README.md                          📑 docs 分层索引（主线 / 设计 / 交接归档 / 运行手册）

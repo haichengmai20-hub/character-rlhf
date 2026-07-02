@@ -68,6 +68,23 @@ RM 迭代(v1→v5 软判别器) → v6.x 细粒度 RM(8维 rubric/delta=2/roledr
 
 ---
 
+## 3.5 Credit Assignment 视角：把版本演进读成"补哪一层 credit"
+
+> 完整分析见 [深读 8 — Character RLHF 中的 Credit Assignment](../deep_dives/08_credit_assignment_in_character_rlhf.md)。
+
+上面的版本表还可以按"每一版在补 sequence→token credit 错配的哪一层"来读——这解释了为什么方向修对了、source 也解耦了，attack 仍压不动：
+
+| 版本 | 补的是哪一层 credit | 观察结果 | 归因 | 决策 |
+|---|---|---|---|---|
+| 早期 RL v1/v2 → anti-OOC 修复 | 组件 / sequence（方向） | base 27% → RL 55%/91% 后修回 | +3.0 bonus 把 credit 分给破角 | 硬罚 -5 + 撤 bonus |
+| v6.7（clean RL 停） | group（方差） | clean +0.037≈噪声 | RM clean 跨度 0.037 无 group credit | 富度归 SFT |
+| v6.10（per-source KL） | source（解耦） | clean 守住、attack 未降 | source credit 分开但 attack 内部未定位 | step90 停线 |
+| 下一步（RM v7 / 定向数据） | token / span（定位）**（proposed）** | — | -5 仍无法落到破角 span | 把 credit 下沉到 span |
+
+**主线一句话**：v1→v6.10 是"先修 reward 方向 → 再补 group 方差 → 再做 source 解耦"，唯独 token/span 层的 credit 定位始终缺位——这正是 v6.10 之后转向 quality-aware benchmark / RM v7 的深层原因。
+
+---
+
 ## 4. 怎么用这张表
 
 - **想快速对齐项目进度**：看 §0 主线 + §2 最后三行（v6.9c / v6.10 / 下一步质量线）。

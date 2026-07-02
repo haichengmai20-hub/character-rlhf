@@ -4,6 +4,9 @@
 >
 > 所有数字来自实测（配置/日志见 [docs/](../docs/)），不是教科书估算。
 
+> ## Attribution Lens
+> 本篇把观察到的行为主要归因到 **deployment setting / 算力约束**（显存账、通信原语、vLLM 服务显存、GPU 拓扑），而非 data / reward / GRPO / evaluation。它是"算力反推算法"的一层：先算清每 GB 与每条通信路径，再决定 ZeRO 档位与 merge/部署方案。
+
 ---
 
 ## 0. 硬件底牌：一切算账的起点
