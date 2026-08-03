@@ -5,7 +5,7 @@
 
 对应接手前状态文档:
 
-- [GEMMA4_TAKEOVER_STATUS_20260420.md](/home/ps/hanjiaqi/LlamaFactory/chatjoy/GEMMA4_TAKEOVER_STATUS_20260420.md)
+- [GEMMA4_TAKEOVER_STATUS_20260420.md](GEMMA4_TAKEOVER_STATUS_20260420.md)
 
 ## 0. 当前 deep dive TODO
 
@@ -60,7 +60,7 @@
    - step time 偏短
    - 这更像训练行为被额外 hook/monkey-patch 干扰后的伪成功，而不是正常收敛
 
-2. 当前最新 [latest_gemma4.log](/home/ps/hanjiaqi/LlamaFactory/chatjoy/logs/latest_gemma4.log) 里的报错不是这个问题
+2. 当前最新 [latest_gemma4.log](#) 里的报错不是这个问题
    - 最新日志是在模型加载阶段失败
    - 直接原因是 `transformers` 的 `caching_allocator_warmup()` 在 GPU0 上申请 `12.21 GiB`
    - 当时 GPU0 只剩 `1.76 GiB` 可用，因为别的进程已占用约 `29 GiB`
@@ -78,7 +78,7 @@
 
 日志:
 
-- [latest_gemma4.log](/home/ps/hanjiaqi/LlamaFactory/chatjoy/logs/latest_gemma4.log)
+- [latest_gemma4.log](#)
 
 关键诊断:
 
@@ -142,9 +142,9 @@ Gemma4 text 配置当前是:
 
 ### 修改文件
 
-- [src/llamafactory/model/patcher.py](/home/ps/hanjiaqi/LlamaFactory/src/llamafactory/model/patcher.py)
-- [src/llamafactory/model/model_utils/moe.py](/home/ps/hanjiaqi/LlamaFactory/src/llamafactory/model/model_utils/moe.py)
-- [src/llamafactory/model/loader.py](/home/ps/hanjiaqi/LlamaFactory/src/llamafactory/model/loader.py)
+- src/llamafactory/model/patcher.py
+- src/llamafactory/model/model_utils/moe.py
+- src/llamafactory/model/loader.py
 
 ### 修改内容
 
@@ -463,7 +463,7 @@ HF 的 `@use_experts_implementation` 装饰器和 `transformers.integrations.moe
 - 实际 Gemma4 checkpoint
 - 实际 LlamaFactory `load_tokenizer(...) + load_model(...)`
 - 实际 YAML:
-  - [gemma4_sft2_1gpu_lora.yaml](/home/ps/hanjiaqi/LlamaFactory/chatjoy/gemma4_sft2_1gpu_lora.yaml)
+  - [gemma4_sft2_1gpu_lora.yaml](#)
 - `GPU 1`
 
 结果:

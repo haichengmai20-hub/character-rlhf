@@ -1,6 +1,6 @@
 # ChatJoy Framework Bridge
 
-这套桥接脚本只放在 [GRPO_Training_Package](/home/ps/hanjiaqi/LlamaFactory/chatjoy/GRPO_Training_Package) 里面，目标是把 ChatJoy 现有 demo 数据接到：
+这套桥接脚本只放在 GRPO_Training_Package 里面，目标是把 ChatJoy 现有 demo 数据接到：
 
 - OpenRLHF 的 pair / RM 训练链路
 - verl 的 online actor LoRA / GRPO 链路
@@ -26,15 +26,15 @@ framework_bridge/
 这些脚本都兼容以下几类输入：
 
 1. ChatJoy SFT 原始 jsonl
-   - 例如 [clean32_for_sft2.jsonl](/home/ps/hanjiaqi/LlamaFactory/chatjoy/data/runs/clean32_for_sft2.jsonl)
+   - 例如 [clean32_for_sft2.jsonl](#)
    - 字段: `instruction / output / language / system`
 
 2. ChatJoy 嵌套 `item` 格式
-   - 例如 [cleaned.issue_removed.lang19.merged_recoverable_787_v1.jsonl](/home/ps/hanjiaqi/LlamaFactory/chatjoy/data/runs/20260331_114330_gemini_41069_57197_backup/cleaned.issue_removed.lang19.merged_recoverable_787_v1.jsonl)
+   - 例如 [cleaned.issue_removed.lang19.merged_recoverable_787_v1.jsonl](#)
    - 外层是 `index + item`
 
 3. 已经生成好的 pair jsonl
-   - 例如 [rejected_pairs_from_sft_test20.jsonl](/home/ps/hanjiaqi/LlamaFactory/chatjoy/data/runs/rejected_sft_sample20_20260331_155727/rejected_pairs_from_sft_test20.jsonl)
+   - 例如 [rejected_pairs_from_sft_test20.jsonl](#)
    - 字段: `prompt / system / chosen / rejected / language / rejected_type`
 
 ## 脚本职责
@@ -60,7 +60,7 @@ python prepare_openrlhf_rm_data.py   --input /path/to/pairs.jsonl   --train-outp
 }
 ```
 
-然后直接用 [openrlhf/train_rm_openrlhf.sh](/home/ps/hanjiaqi/LlamaFactory/chatjoy/GRPO_Training_Package/framework_bridge/openrlhf/train_rm_openrlhf.sh) 开 RM。这个脚本已经补上 `--prompt_key prompt` 和 `--value_head_prefix score`，更适合后续给 verl 侧挂 RM。
+然后直接用 openrlhf/train_rm_openrlhf.sh 开 RM。这个脚本已经补上 `--prompt_key prompt` 和 `--value_head_prefix score`，更适合后续给 verl 侧挂 RM。
 
 ### 2. OpenRLHF Prompt 数据
 
@@ -107,20 +107,20 @@ python prepare_verl_rl_data.py   --input /path/to/clean32_for_sft2.jsonl   --tra
 
 ### A. 先训 RM
 
-1. 用 [build_rejected_from_sft.py](/home/ps/hanjiaqi/LlamaFactory/chatjoy/GRPO_Training_Package/build_rejected_from_sft.py) 产大规模 pair
+1. 用 [build_rejected_from_sft.py](#) 产大规模 pair
 2. 用 `prepare_openrlhf_rm_data.py` 转 OpenRLHF 数据
-3. 用 [openrlhf/train_rm_openrlhf.sh](/home/ps/hanjiaqi/LlamaFactory/chatjoy/GRPO_Training_Package/framework_bridge/openrlhf/train_rm_openrlhf.sh) 开训
-4. 用 [openrlhf/serve_rm_openrlhf.sh](/home/ps/hanjiaqi/LlamaFactory/chatjoy/GRPO_Training_Package/framework_bridge/openrlhf/serve_rm_openrlhf.sh) 挂 RM
+3. 用 openrlhf/train_rm_openrlhf.sh 开训
+4. 用 openrlhf/serve_rm_openrlhf.sh 挂 RM
 
 ### B. 再训 actor
 
 1. 用 `prepare_verl_rl_data.py` 生成 actor parquet
 2. 把 `RM_MODEL_PATH` 指向 OpenRLHF 训练好的 RM
-3. 用 [verl/train_grpo_lora_actor_verl.sh](/home/ps/hanjiaqi/LlamaFactory/chatjoy/GRPO_Training_Package/framework_bridge/verl/train_grpo_lora_actor_verl.sh) 开 actor
+3. 用 verl/train_grpo_lora_actor_verl.sh 开 actor
 
 ## LoRA 模式说明
 
-[verl/train_grpo_lora_actor_verl.sh](/home/ps/hanjiaqi/LlamaFactory/chatjoy/GRPO_Training_Package/framework_bridge/verl/train_grpo_lora_actor_verl.sh) 支持两种模式：
+verl/train_grpo_lora_actor_verl.sh 支持两种模式：
 
 1. `MODEL_PATH = merged SFT model`，再新挂一个 RL LoRA
 2. `MODEL_PATH = base/merged`，同时设置 `SFT_LORA_ADAPTER=/path/to/existing/adapter`
@@ -132,10 +132,10 @@ python prepare_verl_rl_data.py   --input /path/to/clean32_for_sft2.jsonl   --tra
 脚本里默认指向的是你当前仓库里已经存在的 demo 路径，方便 smoke test：
 
 - pair demo:
-  - [rejected_pairs_from_sft_test20.jsonl](/home/ps/hanjiaqi/LlamaFactory/chatjoy/data/runs/rejected_sft_sample20_20260331_155727/rejected_pairs_from_sft_test20.jsonl)
+  - [rejected_pairs_from_sft_test20.jsonl](#)
 - SFT 原始数据:
-  - [clean32_for_sft2.jsonl](/home/ps/hanjiaqi/LlamaFactory/chatjoy/data/runs/clean32_for_sft2.jsonl)
+  - [clean32_for_sft2.jsonl](#)
 - SFT merged 模型:
-  - [clean32_for_sft2_fsdp_qlora_merged](/home/ps/hanjiaqi/LlamaFactory/chatjoy/saves/qwen3-30b-moe/clean32_for_sft2_fsdp_qlora_merged)
+  - clean32_for_sft2_fsdp_qlora_merged
 
 正式训练前，建议把 `PAIR_INPUT` 和 `PROMPT_INPUT` 替换成你真正的大规模产物。

@@ -1,8 +1,12 @@
 # 深读 5 — 何时从 SFT 转向 RL：入口门的多重判据与"过早起 RL"的真实代价
 
+> 阅读路线：先看 [深读 0 — 面试综合路线](00_interview_synthesis.md)，再按本篇专题深挖。
+
+> **版本命名**：本篇保留原始实验号叙述；哪些是真改进、哪些只是 run/restart/失败实验，以 [VERSION_MAP](../docs/VERSION_MAP.md) 和 [project_chatjoy_overview](../docs/project_chatjoy_overview.md) 的阶段映射为准。
+
 > 本篇展示的能力：**把"该不该起 RL"从一个拍脑袋的决定，拆成一串可证伪的门（gate），并用本项目三次真实的 RL/SFT 判断（v6.5、v6.7、v6.9c）逐门给出"违反它会发生什么"的实测证据**。核心结论：过早或错配的 RL 不是"零收益"，是**负收益**——这正是"入口门"存在的理由。
 >
-> 所有数字来自工作区真实文件：`v69_reconcile_report.md`（三方真破功）、`docs/chatjoy_rl_v610_defense_clean_aware_design.md` §0、`CASE_STUDY.md`（v6.5 归因）、`/root/rich_cjk_sft_v69/` 下的 probe 数据与 build 脚本。与既有运行手册 [RLHF_WORKFLOW.md](../RLHF_WORKFLOW.md) §8.1 的区别：那里是"怎么执行入口门"的 runbook，本篇是"为什么是这几道门、每道门背后的数据机制"。
+> 所有数字来自工作区真实文件：`v69_reconcile_report.md`（三方真破功）、`docs/design/chatjoy_rl_v610_defense_clean_aware_design.md` §0、`CASE_STUDY.md`（v6.5 归因）、`/root/rich_cjk_sft_v69/` 下的 probe 数据与 build 脚本。与既有运行手册 [RLHF_WORKFLOW.md](../RLHF_WORKFLOW.md) §8.1 的区别：那里是"怎么执行入口门"的 runbook，本篇是"为什么是这几道门、每道门背后的数据机制"。
 
 > ## Attribution Lens
 > 本篇的四道入口门本质是"把一次 RL 失败归因到哪一层"的判据：门 A=**evaluation protocol**、门 B=**reward model**（目标轴方差）、门 C=**data distribution**（SFT 可约性）、门 D=**GRPO optimization** 的代价。[深读 8](08_credit_assignment_in_character_rlhf.md) 在门 B 之后补了一道 **Gate E（credit 能否定位到真正错误行为）**——本项目 v6.10 正是 A/B/C 齐过却卡在 Gate E。
@@ -97,7 +101,7 @@ GRPO 的优势是组内标准化 `A_i = (r_i − mean)/std`（深读 3 §1.1）�
 
 即便 A/B/C 三门齐过，RL 仍可能把别的东西弄坏。本项目有三个实测风险，它们共同决定了 v6.10 不是"放手跑到 200 步"，而是带一道 canary 门：
 
-1. **clean 回退**：RM 在 clean 上平（门 B），意味着 RL 对 clean 没有"保护性梯度"，KL 一旦松，clean 分布会被 attack 侧的更新带着漂走。对策：per-source KL（clean prompt 只拿 `clean_q` + 紧 KL_CLEAN=0.008 锚 actor，物理上不给 RL 推离 clean 的信号）。
+1. **clean 回退**：RM 在 clean 上平（门 B），意味着 RL 对 clean 没有"保护性梯度"，KL 一旦松，clean 分布会被 attack 侧的更新带着漂走。v6.10 设计/远端记录的对策是 per-source KL（clean prompt 只拿 `clean_q` + KL_CLEAN=0.008）；step90 确认 clean held，但完整关闭 clean RM 的 patch 未入库，不能用当前本地代码证明“物理上不给信号”。
 
 2. **温度脆**：v6.7 是这道风险的活样本。按**修正后的 attack-split RM**（纯 attack 分，非 clean+attack 混合分）：
 
@@ -168,7 +172,7 @@ GRPO 的优势是组内标准化 `A_i = (r_i − mean)/std`（深读 3 §1.1）�
 | v6.9c defense 占比 **64.1%** | `chatjoy_eval_paradigm.md`：`4566 = 2686+1200+440+240`；本人 `build_mix_v69c.py` 输出复算一致 | **旧 banner 的"54%"是规划期估值（2686/~5000），已被实测 64.1% 取代** |
 | unique defense 120 → 2686 | `defense_supplement.jsonl`（120 行）/ `defense_supplement_v69c.jsonl`（2686 行）直接 wc | 22.4× |
 | step0 自蒸馏 78.8% in-char 良率 | `chatjoy_eval_paradigm.md` 旁证 | 否决"teacher 产不出 defense"假说 |
-| v6.7 attack-split RM t0.7 0.293→0.305 / t1.0 更差 | `docs/chatjoy_rl_v610_defense_clean_aware_design.md` §0 | **分轴口径**；旧"+0.092"是 clean+attack 混合分，已弃用 |
+| v6.7 attack-split RM t0.7 0.293→0.305 / t1.0 更差 | `docs/design/chatjoy_rl_v610_defense_clean_aware_design.md` §0 | **分轴口径**；旧"+0.092"是 clean+attack 混合分，已弃用 |
 | v6.5 roledrop base 27% / RL 55% / 91%；val 11% ≠ 产品 55% | `CASE_STUDY.md` / `README.md` | — |
 
 > **一处与工作区历史记录不一致的自纠**：A6 真代码破功的正确序列是 **5(step0)→9(v69b)→11(v69c)**（`v69_reconcile_report.md` 去误报表）。`/root` 工作区的记忆 banner / HANDOFF 仍写作"5→12→4→11"，那是混了 raw 与去误报前的中间计数；**本仓库（深读 + RLHF_WORKFLOW 钥匙3）已统一采用 reconcile 报告的去误报真值**。这类"同一现象在不同文档留下不同数字"正是为什么本项目坚持"同一次、同检测器重算才可比"的同尺原则（深读 2 / eval-paradigm 范式第 6 条）。

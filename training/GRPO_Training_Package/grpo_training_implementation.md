@@ -535,7 +535,7 @@ GRPO:
 
 - rejected 构造:
   - [/home/ps/hanjiaqi/LlamaFactory/chatjoy/GRPO_Training_Package/build_rejected_from_sft.py](/home/ps/hanjiaqi/LlamaFactory/chatjoy/GRPO_Training_Package/build_rejected_from_sft.py)
-  - [/home/ps/hanjiaqi/LlamaFactory/chatjoy/GRPO_Training_Package/使用模型生成Rejected完整指南.md](/home/ps/hanjiaqi/LlamaFactory/chatjoy/GRPO_Training_Package/使用模型生成Rejected完整指南.md)
+  - /home/ps/hanjiaqi/LlamaFactory/chatjoy/GRPO_Training_Package/使用模型生成Rejected完整指南.md
 
 - RM / Actor 原型脚本:
   - [/home/ps/hanjiaqi/LlamaFactory/chatjoy/GRPO_Training_Package/train_rm_model.py](/home/ps/hanjiaqi/LlamaFactory/chatjoy/GRPO_Training_Package/train_rm_model.py)

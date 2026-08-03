@@ -1,8 +1,12 @@
 # 深读 3 — RL 训练动力学：参数设置、动态指标趋势观察与策略应对（含算法原理）
 
+> 阅读路线：先看 [深读 0 — 面试综合路线](00_interview_synthesis.md)，再按本篇专题深挖。
+
+> **版本命名**：本篇保留原始实验号叙述；哪些是真改进、哪些只是 run/restart/失败实验，以 [VERSION_MAP](../docs/VERSION_MAP.md) 和 [project_chatjoy_overview](../docs/project_chatjoy_overview.md) 的阶段映射为准。
+
 > 本篇展示的能力：**GRPO/GSPO 的每个参数为什么这么设（算法原理）→ 训练中盯哪些动态指标 → 每一次趋势异常如何归因并选择应对**（调参 / 修奖励 / 修运维 / 还是停训转向）。
 >
-> 所有 val 数字来自真实训练日志；完整时间线见 [docs/chatjoy_rm_v6_3_roledrop_handoff.md](../docs/chatjoy_rm_v6_3_roledrop_handoff.md)。
+> 所有 val 数字来自真实训练日志；完整时间线见 [docs/archive/chatjoy_rm_v6_3_roledrop_handoff.md](../docs/archive/chatjoy_rm_v6_3_roledrop_handoff.md)。
 
 > ## Attribution Lens
 > 本篇把每次趋势异常在 **GRPO optimization**（参数、KL/clip/温度、动态指标）与 **rule reward** 之间定位：判断"平台/尖峰/零移动"到底是优化器问题还是信号问题。GSPO/per-source KL 等参数选择，从 [深读 8](08_credit_assignment_in_character_rlhf.md) 看正是 token 层与 source 层的 credit 干预。
@@ -11,7 +15,7 @@
 
 ## 1. 算法选型与原理
 
-### 1.1 GRPO：用组内相对优势替代 Critic
+### 1.1 GRPO：用组内相对优势替代 Critic（arXiv:2402.03300）
 
 PPO 需要一个 value model 估计 baseline；GRPO 对每个 prompt 采样一组（本项目 `ROLLOUT_N=4→6`）回复，用**组内标准化**构造优势：
 
@@ -22,7 +26,7 @@ A_i = (r_i − mean(r_1..r_n)) / std(r_1..r_n)
 - **为什么适合本项目**：① 省掉 critic 的 26B 显存（在 31.36GB/卡 的机器上是硬约束，见深读 1）；② reward 是"RM 标量 + 规则惩罚"的混合信号，学 value function 很难，组内对比天然鲁棒；
 - **隐含的统计要求**：组内 reward 必须有方差——`std≈0` 时优势全为 0、没有梯度。这就是 RM 验收门 `reward_std ≥ 2.0、saturated=0%` 的来源，也是后面"攻击信号稀疏=没梯度"问题的理论根源（§5）。
 
-### 1.2 GSPO：序列级重要性比（本项目的关键选择）
+### 1.2 GSPO：序列级重要性比（本项目的关键选择，arXiv:2507.18071）
 
 GRPO 默认 token 级重要性比 `π_new(t)/π_old(t)`；GSPO 把它换成**序列级**（长度归一的几何平均），裁剪也在序列级做。选它的三个理由：
 
@@ -34,11 +38,11 @@ GRPO 默认 token 级重要性比 `π_new(t)/π_old(t)`；GSPO 把它换成**序
 
 | 组件 | 设置 | 原理 |
 |---|---|---|
-| **DAPO 非对称裁剪** | `clip_ratio_low=0.2, high=0.28` | 上行方向放宽（鼓励探索好样本）、下行收紧；限制单步策略位移，防 reward-hacking 暴跳 |
+| **DAPO 非对称裁剪** | `clip_ratio_low=0.2, high=0.28` | 上行方向放宽（鼓励探索好样本）、下行收紧；限制单步策略位移，防 reward-hacking 暴跳（clip-higher，arXiv:2503.14476）|
 | **KL 惩罚** | `kl_loss_coef 0.001→0.005`，对参考策略 | 把策略锚在 ref 附近防分布崩坏；LoRA 模式 ref=actor 关 adapter（零显存，深读 1）|
 | **per-source KL** | clean / attack 数据源各自 KL 系数 | 两类数据的最优偏离度不同：clean 想贴近 ref（保质量），attack 想离开 ref（改行为）——单一 KL 系数无法两全 |
-| **熵正则** | `entropy_coeff=0.01` | 防 mode collapse；MoE 下同时维持 router 输入多样性 |
-| **LoRA 范围** | r=32，`[q,k,v,o,gate_proj,up_proj,down_proj]`，**不含 router `gate`** | RL 梯度噪声大，动 128-expert 的路由器极易坍塌；`gate_proj` 是专家 FFN 的 SiLU 门，与路由无关 |
+| **熵正则（实跑）** | `entropy_coeff=0` | 0.01 是早期设计候选；排障记录明确因 actor backward 显存压力不恢复，RL-6.3/6.4/6.5 launcher 均为 0 |
+| **LoRA 范围（实跑）** | r=8 / alpha=8，`[q_proj,k_proj,v_proj,o_proj]` | attention-only 是 LoRA hot-swap 与显存验证后的长跑配置；r32+FFN 是未执行候选，FFN/router 后来用于 SFT 富化线 |
 | **LR** | `1.5e-6 constant`（**不用 cosine**）| RL 总步数事先未知（随时可能停/续/resume），cosine 的"周期=总步数"假设不成立——这正是 RM v3 在 SFT 侧踩过的坑（深读 2 §3.3）的反向应用 |
 | **采样温度** | 1.15→1.2 | 抬 rollout 多样性=抬组内 reward 方差=抬梯度信号（§1.1）；上调时盯 reward_std 与 KL 防失控 |
 
@@ -54,8 +58,8 @@ MAX_PROMPT_LENGTH=2048  MAX_RESPONSE_LENGTH=768   # max_model_len=2816, KV 按�
 TRAIN_BATCH_SIZE=64  ROLLOUT_N=4→6
 loss_mode=gspo  loss_agg_mode=seq-mean-token-mean
 clip_ratio_low=0.2  clip_ratio_high=0.28
-kl_loss_coef=0.001→0.005 (per-source)  entropy_coeff=0.01
-lr=1.5e-6 constant   lora_rank=32  alpha=32
+kl_loss_coef=0.001→0.005 (per-source)  entropy_coeff=0
+lr=1.5e-6 constant   lora_rank=8  alpha=8  target=q/k/v/o
 temperature=1.15→1.2
 SAVE_FREQ=25→5                          # ⭐ 运维参数也是训练参数（§4.1）
 ```
@@ -76,7 +80,7 @@ SAVE_FREQ=25→5                          # ⭐ 运维参数也是训练参数�
 | `lenBonus` / 各 reward 分量 | 每条信号是否按设计生效 | 如 attack 上 `ooc≈−0.58`、`bonus_revoked≈−0.24` 确认惩罚在生效 |
 | 误报抽查（人工读 val 样本）| **指标本身可信吗** | 每次指标突变先查口径（§4.4）|
 
-> 原则：**分量化监控**。total reward 是多路信号之和，只看总分无法归因——`anti_chain_*_component` 全部单独落盘（[anti_chain_reward.py](../training/GRPO_Training_Package/anti_chain_reward.py)）。
+> 原则：**分量化监控**。total reward 是多路信号之和，只看总分无法归因——`anti_chain_*_component` 全部单独落盘（[anti_chain_reward.py](#)）。
 
 ---
 

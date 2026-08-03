@@ -8,8 +8,8 @@
 
 **Tech Stack:** OpenRLHF (RM training), vLLM (rollout + classify), verl (GRPO/RL), DeepSeek API + Qwen-36B-A3B local (cross-validation judge), Python 3.10+ at `/root/miniconda3/envs/gemma4-rl/bin/python` and `/root/miniconda3/envs/tslib/bin/python`.
 
-**Design baseline:** [`/root/.claude/projects/-root/memory/chatjoy_rm_v6_3_roledrop_design.md`](/root/.claude/projects/-root/memory/chatjoy_rm_v6_3_roledrop_design.md)
-**Live progress handoff:** [`/root/.claude/projects/-root/memory/chatjoy_rm_v6_3_roledrop_handoff.md`](/root/.claude/projects/-root/memory/chatjoy_rm_v6_3_roledrop_handoff.md)
+**Design baseline:** [docs/design/chatjoy_rm_v6_3_roledrop_design.md](../design/chatjoy_rm_v6_3_roledrop_design.md)
+**Live progress handoff:** [docs/archive/chatjoy_rm_v6_3_roledrop_handoff.md](chatjoy_rm_v6_3_roledrop_handoff.md)
 
 ---
 

@@ -32,4 +32,4 @@ python -m pytest test_*.py -q        # 反破角 / 长度塑形 / 链式 / 任�
 
 依赖很轻：`pytest` + `numpy`（`pip install pytest numpy`）。这些测试覆盖了项目里最关键的"指标有效性"修复——例如 `test_anti_ooc_disclosure.py` 锁定了"自报身份破角必须 −5、戏内拒绝/引号复述不误伤"的边界（对应 [深读 2](../deep_dives/02_rm_data_reward_and_attribution.md) 的 Goodhart 修复）。
 
-> 这是本仓库**可复现的核心**之一：不依赖模型权重，就能验证 reward gate 的行为是否正确。完整 SFT/RM/RL 的运行命令见 [../docs/training_runbooks.md](../docs/training_runbooks.md)，数据/权重边界见 [../DATA.md](../DATA.md)。
+> 这是本仓库**可复现的核心**之一：不依赖模型权重，就能验证 reward gate 的行为是否正确。完整 SFT/RM/RL 的运行命令见 [../docs/runbooks/training_runbooks.md](../docs/runbooks/training_runbooks.md)，数据/权重边界见 [../DATA.md](../DATA.md)。

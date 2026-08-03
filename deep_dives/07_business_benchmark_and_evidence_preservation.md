@@ -1,8 +1,12 @@
 # 深读 7 — 业务 Benchmark：把产品决策、同尺评测和证据留存串成一套可回归系统
 
+> 阅读路线：先看 [深读 0 — 面试综合路线](00_interview_synthesis.md)，再按本篇专题深挖。
+
+> **版本命名**：本篇保留原始实验号叙述；哪些是真改进、哪些只是 run/restart/失败实验，以 [VERSION_MAP](../docs/VERSION_MAP.md) 和 [project_chatjoy_overview](../docs/project_chatjoy_overview.md) 的阶段映射为准。
+
 > 本篇展示的能力：**把角色模型的评测从"看几条回答好不好"升级为一套可复现的业务 benchmark**。它不是替代 RMTBENCH 这类学术基准，而是把真实语言分布、攻击分布、部署温度、去误报检测器、人工抽读和 scorecard 组织成一个能回答"这个 checkpoint 能不能上线"的决策系统。同时，本篇也说明哪些工作区证据必须以全文、样本或索引形式进仓库，避免项目日后只能靠本机路径回忆。
 
-关联文档：[业务 benchmark 构造指导](../benchmarks/BUSINESS_BENCHMARK_GUIDE.md) · [评测范式](../docs/chatjoy_eval_paradigm.md) · [RMTBENCH](../benchmarks/RMTBENCH/README.md) · [深读 4](04_richness_defense_tension_and_sft_ceiling.md) · [深读 5](05_when_to_move_from_sft_to_rl.md) · [深读 6](06_coordinating_conflicting_objectives.md)。
+关联文档：[业务 benchmark 构造指导](../benchmarks/BUSINESS_BENCHMARK_GUIDE.md) · [评测范式](../docs/design/chatjoy_eval_paradigm.md) · RMTBENCH · [深读 4](04_richness_defense_tension_and_sft_ceiling.md) · [深读 5](05_when_to_move_from_sft_to_rl.md) · [深读 6](06_coordinating_conflicting_objectives.md)。
 
 > ## Attribution Lens
 > 本篇把观察到的行为主要归因到 **evaluation protocol**（同尺协议、去误报检测器、证据留存）：当 benchmark 结论与人工抽读冲突时，先怀疑尺子而非模型。这也是 [深读 8](08_credit_assignment_in_character_rlhf.md) 中 batch/source 层 credit 的前置条件——评测覆盖为零的失效，训练里也拿不到 credit。
@@ -31,7 +35,7 @@ ChatJoy 的 benchmark 要回答的不是"模型在通用 roleplay 榜单排第�
 如果只看传统自动指标，本项目至少会做错三次决策：
 
 1. **v6.5 val 低估产品破功**：训练 val break 约 11%，但产品 roledrop 真实可到 55%。原因不是模型突然变坏，而是 val 几乎没覆盖 bullet/task 注入。这个错误直接导致 375 步 RL 空转。
-2. **raw OOC 高估真破功**：`detect_ooc.py` raw flag 会把 echo/code-block 误报混进来；必须人工/规则三分类成"真身份披露 / 真代码顺从 / echo 误报"才可用。否则会把 36.8% 读成真实风险。
+2. **raw OOC 高估真破功**：`detect_ooc.py` raw flag 会把 echo/code-block 误报混进来；必须人工/规则三分类成"真身份披露 / 真代码顺从 / echo 误报"才可用。否则会把 36.8%（v6.9c 的 raw 值；去误报真值 33.8%）读成真实风险。
 3. **clean RM 误当质量分**：v6.6/v6.7 后发现 RM 在 clean 轴跨度只有 0.037，而 attack 轴约 0.36。RM 能看防御，却几乎看不见 clean 富度。继续用 RM 判 clean，就会误以为 RL 在提质量。
 
 这些不是小瑕疵，而是 benchmark 的地基问题：**一个 benchmark 如果看不见目标失败，或者用错打分层，它会比没有 benchmark 更危险**，因为它会给错误行动提供确定感。
@@ -156,9 +160,9 @@ RMTBENCH 的价值在三点：
 
 这次仓库补齐了以下证据：
 
-- `docs/rl_v610_step90_service_guide.md`：step90 服务启动参数和硬件条件。
+- `docs/runbooks/rl_v610_step90_service_guide.md`：step90 服务启动参数和硬件条件。
 - `reports/sft_richness/rl90_temp_sweep_report.md`：step90 部署参数 sweep 的完整结论。
-- `docs/HANDOFF_next_training_quality.md`：下一轮质量恢复路线，记录 "base > RL(step90)" 后的诊断。
+- `docs/archive/HANDOFF_next_training_quality.md`：下一轮质量恢复路线的原始草案，记录 "base > RL(step90)" 后的诊断。
 - `data/samples/*v69c*sample5.jsonl` / `*rl90*sample5.jsonl`：代表性 probe/RM 输出样本。
 
 仓库仍不应该上传 300MB 级 mix 文件和 49GB 模型权重，但必须在 `DATA.md` 里记录它们的位置、规模和用途。

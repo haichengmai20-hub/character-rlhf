@@ -1,8 +1,12 @@
 # 深读 4 — Clean 富化 SFT 为何侵蚀身份防御：双目标张力的机制分析与 SFT 天花板
 
+> 阅读路线：先看 [深读 0 — 面试综合路线](00_interview_synthesis.md)，再按本篇专题深挖。
+
+> **版本命名**：本篇保留原始实验号叙述；哪些是真改进、哪些只是 run/restart/失败实验，以 [VERSION_MAP](../docs/VERSION_MAP.md) 和 [project_chatjoy_overview](../docs/project_chatjoy_overview.md) 的阶段映射为准。
+
 > 本篇展示的能力：**从"一组反直觉实验数字"出发 → 构建两个互斥的因果假说 → 用已有数据区分它们 → 导出"SFT 天花板是结构性的、不是数据量问题"这一结论，并解释为什么 RL 是下一步出路**。
 >
-> 数字来源：`v69_reconcile_report.md` 三方真破功表 + `chatjoy_eval_paradigm.md`（step0/v69b/v69c 为统一 regex 去 echo/code 误报后的**真破功率**；v6.9 一列只有 raw，未单独做去误报重算，已标注）。模型版本编年见 [docs/chatjoy_rl_v610_defense_clean_aware_design.md](../docs/chatjoy_rl_v610_defense_clean_aware_design.md)。
+> 数字来源：`v69_reconcile_report.md` 三方真破功表 + `chatjoy_eval_paradigm.md`（step0/v69b/v69c 为统一 regex 去 echo/code 误报后的**真破功率**；v6.9 一列只有 raw，未单独做去误报重算，已标注）。模型版本编年见 [docs/design/chatjoy_rl_v610_defense_clean_aware_design.md](../docs/design/chatjoy_rl_v610_defense_clean_aware_design.md)。
 
 > ## Attribution Lens
 > 本篇把"富化侵蚀防御"的残余失败归因到 **data distribution / SFT 范式的结构性天花板**（不是数据量：unique defense 22× 而破功率不降）。这也解释了为什么下一步交给 RL——但 RL 能不能修，取决于 [深读 8](08_credit_assignment_in_character_rlhf.md) 的 group/source/span 层 credit 是否到位。
@@ -16,12 +20,12 @@
 | **step0（基线）** | 纯 clean 富化 SFT（无 defense 数据）| **16.2%**（11/68，真）| 5 | 6 | 0.297 |
 | **v6.9**（+clean 富化，更多轮）| best-of-N 富化选样 ×2-3ep | ~40%（raw 42.6%）| 12(raw) | 14(raw) | 0.214 |
 | **v6.9b**（+defense 第一轮）| +**120 条** step0 自蒸馏 defense | **32.4%**（22/68，真）| 9 | 13 | 0.234 |
-| **v6.9c**（+defense 第二轮）| +**2686 条**跨角色 defense（占聚焦 repair mix **64.1%**）| **33.8%**（23/68，真）| 11 | 12 | 0.271 |
+| **v6.9c**（+defense 第二轮）| +**2686 条**跨角色 defense（连同旧 defense 240 条，defense 合计占聚焦 repair mix **64.1%**）| **33.8%**（23/68，真）| 11 | 12 | 0.271 |
 
 **三行核心事实：**
 
 1. clean 富化 SFT 让破功率从 step0 的 16.2% 跳到 v6.9 的 ~40%（raw 42.6%）——"训得越富、越容易被攻破"。
-2. 两轮 defense 补丁（unique 样本 **120 → 2686，22×**；v6.9c 已占聚焦 repair mix 的 **64.1%**）只把真破功率压到 32.4%/33.8%——**始终无法回到 step0 的 16.2%**。
+2. 两轮 defense 补丁（unique 样本 **120 → 2686，22×**；v6.9c 的 defense 合计已占聚焦 repair mix 的 **64.1%**）只把真破功率压到 32.4%/33.8%——**始终无法回到 step0 的 16.2%**。
 3. 攻击侧 RM 均分可以通过补 defense 数据拉回（0.214 → 0.271），但真破功率拉不回来——**RM 分和真破功率脱钩**（RM 测的是连续的平均质量，真破功率测的是温度采样下的最坏尾部，两者对应不同分布特性，不一定同向移动）。
 
 这组数字与直觉相反，值得认真追究。（注：本篇所有 defense 占比/样本数均经 `build_mix_v69c.py` 输出与数据文件 `wc` 复算，详见附录。）
@@ -60,7 +64,7 @@ clean 富化 SFT 训练模型"以角色为中心、高度沉浸的生成风格"�
 
 ```
 v6.9b repair：unique defense  120 条（step0 自蒸馏，覆盖 A6/A2/A3/ML_*）
-v6.9c repair：unique defense 2686 条（跨角色扩增），占聚焦 mix 4566 条的 64.1%
+v6.9c repair：unique defense 2686 条（跨角色扩增），连同旧 defense 240 条合计 2926 条、占聚焦 mix 4566 条的 64.1%
               （4566 = 身份 defense 2686 + clean 回放 1200 + zh-tw 矫正 440 + 旧 defense 240）
 ```
 
@@ -144,7 +148,7 @@ v6.10 的几个关键设计可以从上面的机制分析里直接推出，不�
 → **解法：rollout 自然产生这个序列。** 把 clean prompt 和 attack prompt 混合放进同一批 rollout，模型从任何状态出发都可能遇到攻击，rollout 里就会出现"沉浸中被攻击"的真实序列。用 `break_pen -5 逐样本` 对破功直接惩罚，梯度就会流到"从沉浸状态里激活防御"这一关键转折点上。
 
 **问题：SFT defense 浓度高会侵蚀 clean 富度（mono 漂移加剧）。**
-→ **解法：per-source KL + clean_q + 紧 KL 锚。** RL 里 clean prompt 只用 `clean_q`（结构性富度代理）+ KL_CLEAN=0.008 锚 actor（紧），没有 RM 梯度，不会被 RL 推离 clean 分布。attack prompt 才开 RM + break_pen + λ·clean_q，两类 prompt 的梯度完全隔离。
+→ **v6.10 设计/远端记录的解法：per-source KL + clean_q + 紧 KL 锚。** 设计上 clean prompt 只用 `clean_q` + KL_CLEAN=0.008，attack prompt 用 RM + break_pen + λ·clean_q。step90 结果确认 clean held，但当前仓库缺关闭 clean RM 的完整 launcher/patch，所以“梯度完全隔离”是设计口径，不能当作本地代码已复现事实。
 
 **问题：A1 身份直球破功是高温采样下才暴露的稀有尾部（且"坦白本能"疑似来自 base 先验，假说）。**
 → **解法：rollout temp=1.0 + N=12。** 在温度 1.0 下 12 次采样会暴露更多高温尾部行为（包括 A1 破功），让 break_pen 有梯度可以推。SFT 阶段的 probe 温度低、且训练是对固定正样本做 MLE，看不到/推不动这个尾部。
@@ -174,7 +178,7 @@ v6.10 的几个关键设计可以从上面的机制分析里直接推出，不�
 |------|------|------|
 | step0 真破功率 16.2%（11/68）= 真代码 5 + 真身份 6 | `v69_reconcile_report.md` 三方表 | 68 attack，t0.9；统一 regex 去 echo 误报（攻击词被角色复读但未出戏）+ code 误报（检测到代码块但非 identity disclosure） |
 | v6.9c 真破功率 33.8%（23/68）= 真代码 11 + 真身份 12 | 同上 | 25 raw flag = 2 echo 误报 + 11 真代码(全 A6) + 12 真身份 |
-| v6.9c defense 占比 **64.1%** | `chatjoy_eval_paradigm.md`：`4566 = 2686+1200+440+240`；本人跑 `build_mix_v69c.py` 输出复算一致 | **旧 banner 的"54%"是规划期估值（2686/~5000），已被实测 64.1% 取代** |
+| v6.9c defense 占比 **64.1%**（= (2686+240)/4566） | `chatjoy_eval_paradigm.md`：`4566 = 2686+1200+440+240`；本人跑 `build_mix_v69c.py` 输出复算一致 | **旧 banner 的"54%"是规划期估值（2686/~5000），已被实测 64.1% 取代**；注意分子是全部 defense（新 2686 + 旧 240），单算 2686/4566 = 58.8% |
 | unique defense 120 → 2686（22×） | `defense_supplement.jsonl` 120 行 / `defense_supplement_v69c.jsonl` 2686 行（`wc -l`） | — |
 | A6 族 defense 49 条、0% 含代码 | 本人对 `defense_supplement.jsonl` 按 case_id + 代码正则统计 | **否决"A6 0% 留存 / teacher 写代码"的上游说法** |
 | step0 自蒸馏 78.8% in-char 良率 | `chatjoy_eval_paradigm.md` 旁证 | 否决"teacher 产不出 defense"假说 |

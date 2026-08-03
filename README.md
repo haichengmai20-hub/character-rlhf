@@ -1,207 +1,223 @@
-# ChatJoy — 多语言角色扮演对话模型训练（SFT → RM → RLHF/GRPO）
+# ChatJoy Character RLHF 文档入口
 
-> 把一个通用 MoE 基座，训练成**多语言、强角色扮演、抗破角**的陪伴对话模型。
-> 完整链路：线上真实聊天数据 → SFT → 偏好对（Preference Pair）→ 奖励模型（RM）→ GRPO 强化学习。
+这个仓库记录的是一次多语言 AI 虚拟伴侣从 API/system prompt 方案迁移到本地模型、再通过 SFT/RM/RLHF 逐步扩展优化目标的工程复盘：最初先解决语言一致性和 system prompt 贴合；第一阶段 RL 暴露破角与富度退化后，项目目标才升级为“抗破角 + 保富度”。
 
-**基座**：Qwen3-30B-A3B-Instruct（MoE，SFT/RM）· **Actor**：Gemma-4-26B-A4B-it（MoE+视觉塔，GRPO）
-**框架**：LlamaFactory（SFT）+ OpenRLHF（RM）+ verl（Actor GRPO）+ vLLM（rollout/serving）
+当前整理版的目标不是把所有历史日志平铺出来，而是服务面试复盘：先讲清业务为什么要训练，再讲每个阶段的数据、训练配置、reward 设计、失败现象和下一轮改动。
 
-> ⚠️ 本仓库是**工程档案 + 代码 + 小样本**。GB 级训练数据与模型权重**不入库**，完整清单与路径见 [DATA.md](DATA.md)。生产地址/库名已脱敏。
+文档治理原则：面试口述主线优先，工作区真实记录用来补强证据、补齐数字和准备追问；如果原始记录的流水账顺序不如口述逻辑清楚，就按更适合面试的因果链重排。数字分成“面试叙事口径”和“仓库可追溯口径”，主动讲主线，被追问时再切到证据表。
 
----
+## 怎么读
 
-## 🧭 怎么读这个仓库（按时间预算选路径）
+面试准备先读三份：
 
-| 时间预算 | 读什么 | 适合谁 |
-|---|---|---|
-| **5 分钟** | 本 README → [VERSION_MAP](docs/VERSION_MAP.md)（一张表看懂版本演进） | 快速判断项目价值与进度 |
-| **30 分钟** | README → [CASE_STUDY](CASE_STUDY.md) → [深读 5：何时从 SFT 转 RL](deep_dives/05_when_to_move_from_sft_to_rl.md) | 面试官 / 技术评审 |
-| **2 小时** | ＋ [RLHF_WORKFLOW](RLHF_WORKFLOW.md) ＋ [深读 1–6](deep_dives/)（6 是 capstone） | 关心 RLHF 方法论的人 |
-| **复现向** | [DATA.md](DATA.md) → [training/README](training/README.md) → [docs/training_runbooks](docs/training_runbooks.md) | 工程复现（先看复现边界）|
-| **面试准备** | [INTERVIEW_SCRIPT](INTERVIEW_SCRIPT.md)（L0 电梯 → L1 主线 → L2 全仓库导读 → L3 难住追问） | 本人复习热身 / 面试官提问参考 |
+1. `README.md`：建立业务主线、阶段台账和关键结论。
+2. `INTERVIEW_SCRIPT.md`：把项目讲成 30 秒 / 3 分钟 / 追问应对三层口述。
+3. `CASE_STUDY.md`：把“训练了很多版本”讲成“发现问题、归因、改信号、停线判断”的能力故事。
 
-> 想直接拿走可迁移的方法（其他角色/陪伴/客服模型通用）：[docs/MIGRATABLE_RLHF_PATTERNS.md](docs/MIGRATABLE_RLHF_PATTERNS.md)。
+追证据时再看：`docs/project_chatjoy_overview.md` 查数据/配置/reward 台账，`docs/VERSION_MAP.md` 查版本和指标，`PIPELINE_TIMELINE.md` 查标准 RLHF pipeline 与项目阶段的映射，`RLHF_WORKFLOW.md` / `DATA.md` / `deep_dives/00_interview_synthesis.md` 查技术细节和深读路线。
 
----
+大型 handoff、plan、debug log 保留证据价值，但不作为第一阅读入口。需要核对原始过程时再进入 `docs/archive/chatjoy_rm_v6_finegrained_handoff.md`、`docs/archive/chatjoy_rm_v6_3_roledrop_handoff.md` 等归档文件。
 
-## 🧭 方法论主线：数据归因驱动的闭环
+## 一句话主线
 
-这个项目想体现的不是"跑过 SFT/RM/RL"，而是一条闭环能力：
+业务起点：API/system prompt 方案在剧情深入后受 safety 拦截，本地 Qwen/Gemma base 或 API 又会在小语种场景发生答复语言错配，因此先做业务后训练。
 
-```
-业务目标 → 数据(真实分布重建) → SFT 初训 → 偏好对+RM → GRPO/RL
-   ▲                                                      │
-   └──── 调 数据/算法/算力 ◀── 数据归因 ◀── 指标趋势观察 ◀──┘
-        (多视角看数据：指标 vs 真实问答 vs 业务)
-```
+目标演化：SFT 先解决语言一致性和角色 system prompt 贴合，RM v1-v5 再把 wrong role / wrong language / length mismatch 做成偏好信号；第一阶段 RL 上线后，产品才把破角和 clean 富度不足明确为主要矛盾，随后 RM v6/v6.3 与多轮 SFT/RL 转向“被攻击仍在角色内化解，同时动作块和情感表达不退化”。
 
-- **数据 / 算法 / 算力 三者互相约束**：算力（5090 无 P2P、MoE 显存）决定能用什么算法（ZeRO-2 + 4-bit、GSPO）；数据归因（RM 退步、指标盲区）决定下一步重训还是改信号。
-- **统计视角的数据敏感度**：方差/区分度当一等公民（`reward_std≥2.0`）、分组读根因、**两次识破"指标在骗自己"**（Goodhart）→ 据此把"再 RL"改成"修数据/换信号"。
+面试亮点：项目最有价值的不是“跑了很多版本”，而是每次线上/评测不动时能把问题归因到数据、RM、reward rule、credit assignment 或 benchmark，并据此决定回 SFT、改 RM、调 reward，还是停线。
 
-👉 **完整复盘（七个归因循环）见 [CASE_STUDY.md](CASE_STUDY.md)。** 下方"核心工程亮点"是索引式摘要。
+## 面试讲法
 
----
+### 1. 业务为什么从 prompt/API 走到本地训练
 
-## 📚 能力深读（deep_dives/，本仓库主菜）
+- 产品形态是多语言虚拟伴侣和角色扮演，用户期望模型始终用用户语言回应，并贴合角色设定。
+- 早期方案是 system prompt + API。问题有两个：API 在剧情深入后容易因为安全策略报错；base/local model 上线后，小语种会出现用户语言和模型回复语言不一致。
+- 业务因此进入后训练：先 SFT 解决语言一致性和 system prompt 贴合，再用 RM/RLHF 把可见问题转成可优化的 reward。
+- 这里不要倒叙成“项目一开始就做抗破角和富度”：这两个目标是在第一阶段 RL 暴露行为退化、产品重新定义破角口径后才进入主线。
 
-前三篇是工程/算法三件套（显存、RM、RL 动力学）；中间两篇是从同一组 v6.9 实验里读出的**研究判断**（为什么富化侵蚀防御 / 何时该转 RL）；第六篇是 capstone——把全部串成一张"多个冲突目标如何协调"的框架。
+### 2. SFT 阶段：先把语言和角色对齐
 
-| # | 深读 | 一句话 | 代表性内容 |
-|---|---|---|---|
-| 1 | [显存算账与 GPU 通信](deep_dives/01_memory_accounting_and_gpu_communication.md) | 在 8×5090（无 NVLink/P2P、31.36GB/卡）上为 26B/30B MoE **把每一 GB 显存和每条通信路径算清楚** | ZeRO 1/2/3 显存×通信量账（all-gather/reduce-scatter 原语级）· NUMA/QPI 拓扑约束 · context length → KV cache → PagedAttention 的服务显存账 · verl colocate 的 param_offload 两张账表（0.09GB vs 12.2GB 余量）· vLLM cumem **虚拟地址预留**语义 + 三档 mem-util 复测（三个值三种死法，每个都能用加法解释）· FSDP merge 51.7GB 不可行性证明 · update_weights 串行换防重排 |
-| 2 | [RM 数据构造、训练与奖励 + 归因](deep_dives/02_rm_data_reward_and_attribution.md) | 偏好数据怎么造、RM 怎么训、最终 reward 怎么设计，**每次进退都归因到具体根因** | 三类单因负样本（DOE 思路）+ 门控 + sample_weight · Bradley-Terry 与三个训练敏感点 · 六版台账（94.5→86.4→86.0→95.5）：batch 方差/cosine 周期/缺陷样本逐个归因 · score head 两阶段凸优化恢复 · v6.3 三杠杆（第 6 candidate/roledrop pair/8 维 rubric）+ 统计验收门 · **奖励反向训练破角的发现与修复**（Goodhart 实例，误报 1/16→0/16）|
-| 3 | [RL 动力学：参数、趋势与策略应对](deep_dives/03_rl_dynamics_params_and_strategy.md) | 每个 RL 参数的**算法原理依据** + 动态指标看板 + 六个"趋势→归因→应对"实战 | GRPO 组内优势/GSPO 序列级比率（为何配 MoE+标量 RM）/DAPO 非对称 clip/per-source KL/熵正则原理 · bonus 按 σ 标定、SAVE_FREQ 按崩溃间隔定、LR constant vs cosine 的选择逻辑 · psKL 平台期 val 序列与多杠杆响应 · grad_norm 尖峰解读 · v6.5 375 步零移动双重归因 · **base 27% < v2 55% < v1 91%** → 停 RL 转 defense-SFT 的决策链 |
-| 4 | [Clean 富化为何侵蚀防御 + SFT 天花板](deep_dives/04_richness_defense_tension_and_sft_ceiling.md) | 一组反直觉数字（step0 16.2% → 富化 40% → 补 defense 仍 33.8%）**拆成两个互斥假说，用数据判真伪** | 数据覆盖稀释 vs 行为表征冲突两假说 · unique defense 120→2686（22×）真破功不降反升=Pareto 碰壁 · 真代码 5→9→11 / 真身份 6→13→12 分类归因 · **否决"teacher 产不出 defense"**（49 条 A6 正样本 0% 含代码、78.8% in-char 良率）· 三处与上游文档不一致的数据自纠 |
-| 5 | [何时从 SFT 转向 RL：入口门判据](deep_dives/05_when_to_move_from_sft_to_rl.md) | 把"该不该起 RL"拆成四道可证伪的门，**每道门配一次违反它的真实代价** | 门 A 评测能否看见失败（v6.5 375 步空转）· 门 B RM 目标轴有无梯度（分轴方差 0.037 vs 0.36）· 门 C 残余失败是否 SFT 不可约（加数据看斜率）· 门 D RL 的代价非零（base 27%→RL 55% 把防御训坏 / 温度脆 / canary 门）· 决策树 + RL 有用的充要条件 |
-| 6 | [多目标协调：三种机制消解冲突](deep_dives/06_coordinating_conflicting_objectives.md) **(capstone)** | 把 clean/attack/动作/语义等冲突目标归到 RLHF 仅有的**三种协调机制**，证明失败=选错机制 | 机制①阶段分配（富度→SFT/防御→RL）· 机制②阶段内聚合**加权和 vs 字典序门控**（v6.8 选择器放大独白 187% / anti_refusal 把"约束"塞进加权和→反向奖励破功）· 机制③ per-source 解耦（clean KL 0.008 / attack 0.002，守富度⇄改防御）· 冲突越深叠的机制越多（富度⇄防御=三层叠加）· 决策表 + 一页速查 |
-| 7 | [业务 Benchmark 与证据留存](deep_dives/07_business_benchmark_and_evidence_preservation.md) | 把 benchmark 从"prompt 集"提升为**产品决策仪表盘 + 同尺协议 + 证据留存系统** | RMTBENCH 外部锚 vs 业务 benchmark 上线门 · L1/L2/L3/L4/L5 分层打分边界 · 为什么 step90 采样 sweep 证明问题在训练层 · 工作区 v69/v6.10 证据如何全文/sample/索引化入库 |
-| 8 | [Character RLHF 中的 Credit Assignment](deep_dives/08_credit_assignment_in_character_rlhf.md) | 把项目几次成败**重新读成对 sequence→token credit 错配某一层的回应**：GRPO 给方向，credit 决定方向落在破角 span 还是整条回复/错误组件/错误 source | 反向破角=组件层 credit 分错（base 27%→RL 55%）· clean 提不动=group 层无方差（跨度 0.037）· length hacking=token 层长度泄漏 · per-source KL=项目已建的 source 层 credit 干预 · v6.10 attack 压不动=token/span 层仍缺位 · 新增 Gate E · 迁移到 Agentic trajectory credit（新诊断均标 proposed）|
-| 9 | [全链路差分归因](deep_dives/09_full_chain_attribution.md) | 指标没提升/上线不行时，用**差分诊断**把根因判给正确的一层：同一症状、8 个候选病因、每个配一个比重训便宜几个数量级的**最小判别实验** | 四次"指标没动"归到四个不同层（v6.5 评测盲区 / v6.7 RM 无方差 / v6.8 数据放大 / v6.10 credit 缺位，归因到 RL 算法命中率 0/4）· 易混病因对判别关键（RM 无方差 vs credit 无定位 / 数据可补 vs SFT 到顶 / RL 参数 vs credit）· 排查流程图（深读 5 的后向镜像）· 新诊断均标 proposed |
+目标：贴合 system prompt、稳定使用用户语言、保留角色扮演格式。
 
----
+面试叙事和证据口径：
 
-## 这是什么
+- 来源：生产 Milvus 会话，按 `(user_id, character_id)` 时间序重建 TOP20 高频角色真实会话，并绑定真实 role card/system prompt。
+- 采样：27 种语言、每语言最多 2,200 条，理论 59,400，实际 pre-API 57,197。这个口径和口述中的“每语言约 2,160、6-turn round”是同一业务思路下的不同复盘口径；仓库强证据以 57,197 pre-API 为准。
+- 重写：用 Gemini 系列 API 只重写 assistant output，不改 user prompt / system prompt / language metadata。脚本记录参数为 `temperature=0.7`、`max_output_tokens=2048`、`thinking=low`，并受到 API safety filter 影响。
+- 清洗：过滤 API error/safety、占位符泄漏、语言不一致等问题；第一波 SFT 产物是 `clean32_for_sft1` 13,128 条、`clean32_for_sft2` 19,508 条。
+- 训练：分别得到 Qwen 和 Gemma4 的 SFT 版本。
 
-ChatJoy 的目标不是通用问答，而是**多语言角色扮演陪伴对话**。整条链路围绕三件事设计：
+关键训练配置：
 
-1. **保持真实用户分布** — instruction 来自线上真实聊天记录（Milvus 导出），不是人工模板
-2. **保持角色卡约束** — 每条样本绑定角色 system prompt，避免只学泛化闲聊
-3. **强化多语言一致性 + 角色扮演格式 + 抗破角** — SFT 学基础表达，RM 学会区分角色/语言/长度/格式优劣，RL 用 RM + 反破角信号继续优化在线 actor
+| 模型 | 框架/并行 | 数据 | LoRA/QLoRA | 长度与 batch | 结果 |
+|---|---|---:|---|---|---|
+| Qwen3-30B-A3B SFT2 | LlamaFactory + Accelerate FSDP FULL_SHARD，8 GPU | 19,508 | 4bit QLoRA，q/k/v/o，r8/alpha16；LR 1e-4，cosine，warmup 0.1 | cutoff 1536，batch 1，grad_acc 2，effective batch 16，2 epoch | 2,440 steps，train loss 1.2335 |
+| Gemma4 SFT2 | 3GPU DDP | 19,508 | 4bit LoRA，q/k/v/o，r32/alpha64；LR 1e-4，cosine，warmup 0.03 | cutoff 3072，batch 1，grad_acc 8，2 epoch | global step 1,626，train loss 1.1168 |
 
-覆盖 **TOP20 角色 × 27 语言**。
+口述中提到的 `41,536 -> 34,560 -> 22,680`、`<4 分重写` 保留为“轮级质量控制/低分重写”的面试叙事口径；当前证据表同时列出仓库可追溯的 57,197 / 13,128 / 19,508 产物口径。面试时先讲业务闭环：抽样、重写、过滤、judge、低分修复；只有被追问精确落盘文件时，再说明两套数字口径尚需对齐。
 
----
+### 3. RM v1-v5：把错误模式显式做成 pairdata
 
-## 全链路
+SFT 产品测试口径通过后，线上仍能观察到语言不一致和角色不稳。于是训练 RM，让 reward 能区分错误类型。
 
-```
-线上真实聊天 (Milvus, 按 user/character 会话流重建)
-        │  export_data.py → 清洗/过滤/平衡
-        ▼
-[1] SFT (LlamaFactory, QLoRA)
-        │  Qwen3-30B-A3B MoE — 修复 expert 裸 nn.Parameter 4-bit 量化 + FSDP 链
-        ▼
-[2] Preference Pair 生成
-        │  多候选采样 + LLM-judge (Gemini/Qwen 交叉) + 拒绝采样 + 重平衡/sample_weight
-        ▼
-[3] Reward Model (OpenRLHF)
-        │  v1→v6.3 迭代：细粒度 rubric 8 维 + delta=2 难负样本 + roledrop_attack pair
-        │  + base 模型作第 6 candidate + reward_std×20 + length-hacking 5 层防护
-        ▼
-[4] GRPO 强化学习 (verl + vLLM rollout)
-        │  Actor=Gemma4-26B-A4B-it；自定义 reward = RM + anti-OOC + anti-refusal + length-shaping
-        ▼
-   抗破角 / 多语言一致 / 角色扮演陪伴模型
+pairdata 设计：
+
+- `chosen`：来自 SFT clean 数据。
+- `rejected`：用 SFT2 merged model 或 cross-sample 构造错误回复。
+- 类型：`wrong_role`、`wrong_language`、`length_mismatch_short`、`length_mismatch_long`。
+- wrong role：保留 user prompt 和目标角色语境，但替换/错配 system prompt 或角色回复。
+- wrong language：保留角色，让回复语言偏离用户语言。
+- length mismatch：把过短或过长/重复的回复作为 rejected。口述里“chosen 0.8-1.2 以外要惩罚”可以作为解释口径；仓库正式类型拆成 short/long。
+- 4D pair-build heuristic：`format / role / language / length`，默认权重 `0.30 / 0.30 / 0.25 / 0.15`，并按 rejected 类型调整；它是构对过滤规则，不是 DeepSeek/Qwen LLM judge。
+- 数据配比目标：wrong_language 25%、wrong_role 25%、length_short 30%、length_long 20%。
+- `sample_weight` 元数据：`clip(0.4 + 0.6 * gap_norm, 0.3, 1.2)`；当前 OpenRLHF `RewardDataset` 未消费该字段，实际生效的是 25/25/30/20 重采样和显式重复。
+
+RM v1-v5 台账：
+
+| 版本 | 数据 | 配置 | 结果 | 结论 |
+|---|---:|---|---|---|
+| RM v1 | train 16,826 / eval 885 | Qwen RM，ZeRO-2，4bit LoRA r64 q/k/v/o，LR 9e-6，batch 128，263 steps | acc 94.5%，gap 1.601 | 首个可用 RM |
+| RM v2 | 14,826，删除 2,000 个低 gap long 样本 | batch 64，231 steps | acc 86.4%，gap 1.122 | batch 变小和 score head 保存问题导致退化 |
+| RM v3 | 18,955，加入 bad/defective 样本 | batch 128，148 steps | acc 86.0%，gap 1.256 | steps 太短、低 gap long-bad 污染 |
+| RM v4 | 计划/脚本版 | 未正式训练 | 无正式结果 | 被 v5 覆盖 |
+| RM v5 | 17,712，完整 v1 base + 约 5% bad-case pool | batch 64，276 steps，LR 9e-6，LoRA r64 alpha128 q/k/v/o | acc 95.5%，gap 3.497 | 离线最强 Qwen RM，但在线 reward 方差偏弱/接近软二分类 |
+| Gemma4 RM v5 复现 | 同 v5 数据 | Gemma4 SFT2 base，sdpa | acc 0.975，gap 6.462，wrong 2.7% | 离线强，但 score saturation 高，需要 normalize/clamp |
+
+### 4. RL 第一阶段：RM reward 够强还不等于行为变好
+
+早期 RL 使用 RM v5 或 Gemma4 RM 作为在线 scorer，并叠加 rule reward。初版公式大致是：
+
+```text
+total_reward = online_rm_score + anti_refusal_custom_reward
 ```
 
----
+后来扩展为：
 
-## 🔧 核心工程亮点（面试关注点）
+```text
+total_reward = rm_score
+             + anti_refusal
+             + anti_repetition
+             + anti_ooc
+             + bonus_revoked
+             + length_shaping
+```
 
-| 主题 | 难点 | 做法 / 结论 |
-|---|---|---|
-| **MoE QLoRA 训练** | Qwen3/Gemma4 的 expert 是裸 `nn.Parameter`（非 `nn.Linear`），常规 4-bit 量化/PEFT 注入会崩 | 自定义 experts 4-bit 量化实现 + 4-GPU FSDP 修复链；Gemma4 merge 必须 `force_text_only` 否则视觉塔 q/k/v/o 崩 |
-| **RM 细粒度设计 (v6.3)** | 粗粒度 RM 区分不出"角色对但平淡"vs"角色对且细腻" | rubric 8 维打分 + `delta=2` 难负样本 + roledrop_attack 偏好对 + base 模型当第 6 candidate + `reward_std×20` 放大区分度 |
-| **Length Reward Hacking** | RL 会发现"写更长 = 更高分"而灌水 | 5 层防护：RM 训练去长度偏置 + actor 层 length-shaping（放宽 + 饱和封顶）+ 重复惩罚 + 链式惩罚 |
-| **Reward Hacking 反向破角（关键发现）** | 模型在攻击下"我是 Gemma 4"破角，旧 `atk_break%` 关键词指标却显示只有 ~16% | 根因：`anti_refusal` 的 +3.0 NON_REFUSAL_BONUS 把"自报 AI 身份"判为合规给满分 → **反向训练破角**。修复（全 TDD，不重训 RM）：新增 `anti_ooc_disclosure.py`（破角硬罚 -5、撤销误给 bonus、多语言）+ `length_shaping_reward.py` |
-| **Defense-SFT 蒸馏** | RL 信号稀疏修不动破角 | 用 idle 的 base 模型当 teacher，蒸馏"戏内化解"攻击的回复，三门过滤 + 拒绝采样，挂回 SFT |
-| **verl GRPO 接入** | Gemma4（MoE+视觉）接 verl/vLLM rollout 多个必死崩溃 | 修 LoRA merge / score head / vLLM patch；纯文本 merge 后须补 `vision_config` + `--limit-mm-per-prompt '{"image":0,"video":0}'` |
-| **评测体系** | "破角率"等指标对自报身份完全瞎 | 升级检测器 + 5 维评测 + RM breakdown + pairwise；发现 **val break 11% ≠ 产品 roledrop 55%**（验证集几乎不触发产品式 bullet 注入）|
+关键点：
 
----
+- KL 不直接加到 reward，而是在 actor loss 中作为约束。
+- 初版 `anti_refusal` 只惩罚拒答；后来 attack 非拒绝给 `+3`，但这产生 Goodhart：模型可以通过自称模型、泄露系统身份来拿非拒绝 bonus。
+- 因此加入 `anti_ooc=-5` 和 `bonus_revoked`：attack 中一旦触发 OOC / task compliance，就撤销非拒绝 bonus。
+- `length_shaping` 是 clean-only，需要通过角色扮演格式、非拒绝、非破角、非重复等 gate；早期 target 600/1200，后续到 1500，coef 从 0.4/0.5 到 1.0，再在 v6.10 降到 0.3。
 
-## 📍 当前状态 (2026-06-18) — v6.10 step90 已验证：clean 守住，attack 未修复
+训练栈：SFT 用 LlamaFactory/Accelerate，RM 用 OpenRLHF，actor RL 用 verl + vLLM，算法主线是 GRPO/GSPO。硬件约束是 RTX 5090 级别多卡、无 NVLink/P2P，所以大模型训练主要采用 4bit base + LoRA + ZeRO-2/FSDP1，避免 ZeRO-3 的高通信和卡死风险。
 
-完整版本表见 [docs/VERSION_MAP.md](docs/VERSION_MAP.md)；以下是主线：
+第一阶段现象：
 
-- **v6.5 停训（战略拐点，2026-06-08）**：硬化 GRPO 375 步零移动；发现 **val 11% ≠ 产品 55%**、且 RL 把 base 原生防御训坏（roledrop 破功 base 27% → RL 55%）→ 不再纯 RL 调参，**富度交 SFT、防御留 RL**。
-- **SFT 富化弧（v6.7 → v6.8 失败 → v6.9 成功）**：v6.9 best-of-N 均衡选择器把 clean 动作/对话拉到 ≥step0、逼近 base（clean **PASS**）；但富化**侵蚀了身份防御**（真破功 step0 16.2% → 富化后 ~40%）。
-- **三轮 SFT-defense 到天花板（v6.9b/v6.9c）**：unique defense 120 → 2686（22×），真破功只到 32.4%/33.8%，**压不回 step0 的 16.2%** → SFT-defense 是 whack-a-mole（机制见 [深读 4](deep_dives/04_richness_defense_tension_and_sft_ceiling.md)）。
-- **RL v6.10 step90（已执行）**：actor=v6.9c，clean-aware reward + per-source KL 确实**守住了 clean**；但外部同尺 attack probe 未改善：真破功 **36.8%（25/68）≈ v6.9c 33.8%**，attack-split RM **0.235 < v6.9c 0.271**，A6 code 11→12。结论：当前 RM/RL/data 对直球身份披露与代码注入仍缺有效梯度，**不建议同配继续堆步数**。
-- **部署采样定档（step90 服务口径）**：温度/top_p/presence/min_p sweep 证明采样旋钮只能微调表达，不能把 attack 降下去；服务推荐先用 `temperature=0.8, top_p=0.95, presence_penalty=0.4, min_p=0`。完整服务配置见 [docs/rl_v610_step90_service_guide.md](docs/rl_v610_step90_service_guide.md)，采样 sweep 见 [reports/sft_richness/rl90_temp_sweep_report.md](reports/sft_richness/rl90_temp_sweep_report.md)。
-- **下一步**：若产品不能接受约 30% 的真破功地板，下一轮应转 **quality-aware benchmark / RM v7 / 定向 A6+身份披露数据**，而不是靠部署采样或继续同配 RL。下一步训练质量设计见 [docs/HANDOFF_next_training_quality.md](docs/HANDOFF_next_training_quality.md)。
+- 语言一致性明显改善。
+- 产品重新定义的破角/roledrop 变成主要问题。
+- clean 回复富度不足，动作块和语义细腻度不够。
+- 单靠调 temperature、length target、length bonus，无法稳定补富度；富度更多要靠 SFT 数据注入，RL 只能在 RM 信号足够强时放大。
 
-> 早期（至 v6.5）完整时间线见 [docs/project_chatjoy_overview.md](docs/project_chatjoy_overview.md)；v6.6b 之后见 [VERSION_MAP](docs/VERSION_MAP.md) 与深读 4/5。
+### 5. RM v6/v6.3：让 RM 看见富度和破角
 
----
+目标：在 RM 中加入富度、叙事层次和 roledrop 防御信号。
+
+v6/v6.2 从“启发式错例”转向同 prompt 多候选 fine-grained pair：
+
+- 早期 5-source：Gemma4 SFT 两个采样、Qwen SFT 一个采样、RL step550 两个采样。
+- v6.3 变为 6-source：Gemma4 SFT 两采样、Qwen SFT 一采样、RL step550 两采样、纯 Gemma4-it base 一采样。
+- DeepSeek API 与 Qwen local/API 交叉 judge，blind source/order。
+- 口述中的 `best > good > mid > bad > worse` 可以作为 rank 解释，但 v6.3 实际更准确写作 ranked candidates / rank_delta pair。
+- 8D judge rubric：`role fidelity / user relevance / interaction progression / natural style / format-length quality / sensory richness / emotional complexity / narrative layer`。语言错配、拒答、system 泄漏和 `roledrop_execution` 属于 hard fail，不是把语言/安全硬凑进 8 个评分维度。
+
+RM v6.3 数据：
+
+| 组成 | train | eval | 说明 |
+|---|---:|---:|---|
+| v5 anchor | 17,712 | 885 | 保留原 RM v5 锚点，避免忘掉基础错误模式 |
+| Lever1 clean/fine roleplay | 20,574 | 2,303 | 6-source clean/fine-grained judge pairs |
+| Lever2 roledrop attack | 2,265 | 235 | attack curriculum，T1/T2a/T2b = 1125/950/425 |
+| 总计 | 40,551 | 3,423 | train attack 占 5.59%，eval attack 占 6.87% |
+
+RM v6.3 训练配置：Gemma4 SFT2 base，ZeRO-2 + QLoRA 4bit，batch 64，max_len 3072，LR 9e-6，LoRA r128 / alpha256，target `q_proj,k_proj,v_proj,o_proj,up_proj,down_proj`，约 634 steps，训练完成并 merge vLLM。
+
+8 个体验维度何时进入目标、分别落到哪类数据/judge/reward，以及哪些只是设计目标而非实测收益，统一见 `docs/design/chatjoy_business_ux_tech_mapping.md`。
+
+### 6. RL 反复迭代：clean、attack、富度三者互相牵制
+
+口述 RL2/RL3/RL4 可以对应到仓库里的 v6.3-v6.10 实验线：
+
+| 口述阶段 | 仓库对应 | 现象 | 改动 | 结论 |
+|---|---|---|---|---|
+| RL2 | RL-6.3 / 早期产品 v1 | 语言一致性解决，但 attack 破角仍高；clean 轴基本不动 | 引入 per-source KL，attack 更松、clean 更紧；修 SAVE_FREQ 和 reward | reward 数值变好不等于真实行为变好 |
+| 防御 SFT | RL-6.4 前置 defense SFT | attack 需要显式数据补足 | 口述称 RL2/step 模型作基座；仓库实跑是 SFT2 merged + 2,691 defense / 10,764 replay，QLoRA q/k/v/o r16/alpha32，LR 5e-5，2 epoch，562 steps。FFN/router 是后续 richness SFT，不与本轮混写 | SFT 能注入防御，但会牵动 clean 风格 |
+| RL3 | RL-6.4/6.5/6.6b | attack 降低但仍不如 base；clean 动作块变少、回答偏短 | anti-OOC、revoke bonus、length shaping、换 RM v6.6 | clean 富度不能主要靠 RL 修，需要高质量 SFT 数据 |
+| 富度 SFT | SFT-6.8/6.9/6.9b/6.9c | v6.8 monologue 过冲；v6.9 clean 富度恢复但 defense erosion | balanced selector、action/dialog/sensory/interaction/emotion，高质量语义由 DeepSeek/proxy 选 | clean 富度恢复，attack 防御变成新瓶颈 |
+| RL4 | RL-6.10 | clean held，但 true break 未降，step90 比 v6.9c 略差 | 远端设计/运行口径：clean 只用 clean_q + tight KL，attack 用 rm + break_pen + clean_q；当前仓库未保留 v6.10 launcher/关闭 clean RM 的完整 patch | 结果可追溯，但 reward 分支暂不能仅靠本地代码快照复现；瓶颈仍指向 attack RM/数据/评测粒度 |
+
+关键 RL 配置和设计：
+
+- actor RL：verl + vLLM rollout / RM classify，GRPO + GSPO。
+- GSPO：sequence-level importance ratio，配 `seq-mean-token-mean`，更适合 scalar sequence RM 和 MoE 场景。
+- per-source KL：clean tight KL 保质量，attack loose KL 允许偏离 attack-naive reference。v6.10 典型配置 `KL_CLEAN=0.008`、`KL_ATTACK=0.002`。
+- rollout：多处实验使用 `ROLLOUT_N=6`，后续也试过更大 N；温度从 1.15/1.2 到 v6.10 的 1.0。
+- RL-6.3/6.4/6.5 实跑 launcher：attention-only LoRA r8/alpha8、entropy 0、LR 1.5e-6 constant、warmup 0、rollout N=6；rank32/FFN/entropy0.01 属早期候选，不是这三轮长跑实参。
+- v6.10 reward 分三层证据：设计文档/远端记录写作 clean=`clean_q[0,0.3] + tight KL`、attack=`rm + break_pen(-5) + 0.25*clean_q`；step90 报告确认 clean held、attack 未降；但当前入库通用 launcher 仍全局挂 RM，`anti_chain_reward.py` 也未包含 attack-side `0.25*clean_q`，所以本地代码快照不能证明该分支的完整实跑实现。
+
+## 版本号怎么看
+
+这个项目里很多编号不是“产品逐版变强”的意思，面试时要主动拆开：
+
+| 名称 | 正确理解 |
+|---|---|
+| `rl_full_v3/v4/v5` | RL-6.3 内部重启/run 计数，不是模型能力版本。 |
+| RM v2/v3 | 真实训练实验，但结果退化；价值是暴露 batch、score head、LR/steps 和 bad sample 问题。 |
+| RM v4 | 计划/脚本版，未正式训练，被 RM v5 覆盖。 |
+| RL-6.3 / 产品 v1 | 暴露 Goodhart 的早期 RL，不是成功版本。 |
+| RL-6.4 / 产品 v2 | 有真实改善，但仍差于 base，不能讲成最终成功。 |
+| RL-6.5、RL-6.7、RL-6.10 | 诊断价值大于产品价值：分别证明 val 分布、clean RM 梯度、attack credit 仍有瓶颈。 |
+| SFT-6.8 | 失败实验，monologue 过冲；价值是证明 selector 会放大偏差。 |
+| SFT-6.9 | clean 富度真实恢复，是后续防御/RL 的新起点。 |
+| SFT-6.9b/c | defense SFT 尝试，未把 true break 压回 step0；价值是证明 SFT-defense 天花板。 |
+
+更完整的版本去魅见 `deep_dives/00_interview_synthesis.md`。
+
+## 关键经验
+
+1. 业务问题要先拆成可被数据覆盖的错误模式：语言错、角色错、长度错、破角、富度不足，分别对应不同数据和 reward 信号。
+2. SFT 负责把基础分布拉对，尤其是多语言、角色格式、动作块和语义富度；RL 不擅长凭空创造富度。
+3. RM 离线 acc 高不代表在线 RL 有梯度；reward_std、score saturation、在线 classify 池化方式都可能让 RL 信号失真。
+4. Rule reward 是必要的，但也最容易被 hacking；`+3` 非拒绝 bonus 必须配 anti-OOC 和 revoke 机制。
+5. attack 数据占比低时，全局 KL 会把模型拉回不懂 attack 的 SFT reference；per-source KL 是必要基础设施，但不是单独解法。
+6. ZeRO-3/FSDP2 在无 P2P/NVLink、MoE 结构和 31GB 级显存条件下成本高；本项目更稳定的组合是 4bit base + LoRA/QLoRA + ZeRO-2/FSDP1。
+7. 文档阅读必须区分“产品版本”“RM 版本”“SFT 版本”“RL 实验版本”。例如早期产品 v1/v2 不是 RM v1/v2。
+
+## 当前结论
+
+截至当前整理口径，项目已经形成完整闭环：SFT 解决基础语言/角色一致性，RM v1-v5 建立错误模式 pairdata，RM v6/v6.3 引入富度与 roledrop judge，RL 多轮验证了 reward hacking、per-source KL、defense SFT 和 clean-aware reward 的边界。
+
+最后一轮结论偏工程现实：clean 富度可通过 balanced SFT 恢复，但直接身份披露/A6 code 等 attack true break 没有被 v6.10 RL 压下去。下一步应优先做质量感知 RM v7、targeted attack data 和更细粒度评测，而不是继续只调 rollout 参数。
 
 ## 仓库结构
 
+```text
+character-rlhf/
+  README.md                         # 入口和面试主线
+  INTERVIEW_SCRIPT.md               # 口述脚本
+  CASE_STUDY.md                     # 对外 case study
+  PIPELINE_TIMELINE.md              # 标准 RLHF pipeline × 本项目时间线
+  RLHF_WORKFLOW.md                  # 技术主线和阶段流程
+  DATA.md                           # 数据/模型/产物边界
+  docs/
+    README.md                       # 支撑材料索引
+    VERSION_MAP.md                  # 版本事实校准
+    project_chatjoy_overview.md     # 整理版全量台账
+    GLOSSARY.md                     # 术语表
+    design/                         # 设计文档
+    runbooks/                       # 训练/部署 runbook
+    research/                       # 方法论与研究上下文
+    archive/                        # handoff / plan / debug log 归档
+  deep_dives/                       # 专题深挖；00_interview_synthesis 给面试路线
+  training/                         # 数据处理、SFT/RM/RL 训练脚本和配置
+  reports/                          # 评估与对账报告
 ```
-chatjoy-character-rlhf/
-├── README.md                    本文件（项目入口 + 阅读路径 + 当前状态）
-├── LICENSE                      版权声明（All Rights Reserved，作品集参考用途）
-├── CASE_STUDY.md                ⭐ 闭环叙事：7 个归因循环（业务→数据→训练→归因→再迭代，收在 v6.5 战略转向）
-├── DATA.md                      ⭐ 完整数据/模型分层清单（哪些入库、哪些只记录）
-├── INTERVIEW_SCRIPT.md          面试口述脚本（L0/L1/L2 全仓库导读 + L3 难住追问 × 12）
-│
-├── deep_dives/                  ⭐⭐ 能力深读（本仓库主菜）
-│   ├── 01_memory_accounting_and_gpu_communication.md   显存算账 × ZeRO × 通信原语 × vLLM/cumem
-│   ├── 02_rm_data_reward_and_attribution.md            RM 数据构造/训练/奖励设计 × 数据归因
-│   ├── 03_rl_dynamics_params_and_strategy.md           RL 参数原理 × 动态趋势观察 × 策略应对
-│   ├── 04_richness_defense_tension_and_sft_ceiling.md  富化为何侵蚀防御 × 双假说判真伪 × SFT 天花板
-│   ├── 05_when_to_move_from_sft_to_rl.md                何时转 RL × 四道入口门 × 过早起 RL 的代价
-│   ├── 06_coordinating_conflicting_objectives.md       多目标协调 × 三种机制 × 选错机制=失败根源
-│   ├── 07_business_benchmark_and_evidence_preservation.md  业务 benchmark × 同尺协议 × 证据留存
-│   ├── 08_credit_assignment_in_character_rlhf.md        sequence→token credit 错配 × 六层归因 × 对项目成败的实际影响
-│   └── 09_full_chain_attribution.md                     全链路差分归因 × 8 候选病因 × 最小判别实验 × 排查流程图
-│
-├── docs/                        工程知识库（项目全程原始记录）
-│   ├── README.md                          📑 docs 分层索引（主线 / 设计 / 交接归档 / 运行手册）
-│   ├── VERSION_MAP.md                     ⭐ 版本地图：v1→v6.10 一张表
-│   ├── MIGRATABLE_RLHF_PATTERNS.md        ⭐ 可迁移的 RLHF 判断框架（通用方法论）
-│   ├── FRAMEWORK_RUNTIME_LESSONS.md       vLLM / verl / LlamaFactory 运行知识（从日志提炼）
-│   ├── chatjoy_eval_paradigm.md           评测范式：固定 probe + 统一 regex + 真破功去误报
-│   ├── project_chatjoy_overview.md       全链路总纲 + RM/GRPO 全记录 + 当前状态
-│   ├── training_runbooks.md              各阶段可直接运行的启动命令/超参/路径
-│   ├── chatjoy_business_ux_tech_mapping.md  8 维业务体验 → 技术手段映射
-│   ├── RUN_HANDOFF_INDEX_20260618.md     v69b/v69c/v6.10/step90 调参执行交接索引
-│   ├── chatjoy_rm_v6_3_roledrop_design.md   RM v6.3 设计（rubric 8维 / delta=2 / roledrop pair）
-│   ├── chatjoy_rm_v6_3_roledrop_plan.md     v6.3 实施计划 + 70-case 验收 grid
-│   ├── chatjoy_rm_v6_3_roledrop_handoff.md  v6.3→v6.4→v6.5 交接（最新）
-│   ├── chatjoy_rm_v6_finegrained_handoff.md RM 细粒度交接
-│   └── chatjoy_rl_takeover_error_fix_log.md RL 接手错误修复全记录
-│
-├── training/
-│   ├── README.md               训练代码导览 + 如何只跑 reward/detector 单测
-│   ├── GRPO_Training_Package/   ⭐ 强化学习全套代码
-│   │   ├── anti_ooc_disclosure.py        反破角 reward（关键修复）+ 测试
-│   │   ├── anti_refusal_reward.py        反拒绝 reward
-│   │   ├── length_shaping_reward.py      长度塑形（防 hacking）+ 测试
-│   │   ├── anti_repetition_reward.py / anti_chain_reward.py  重复/链式惩罚
-│   │   ├── chatjoy_reward_utils.py       4 维奖励聚合
-│   │   ├── train_rm_model.py / train_actor_model.py  RM / Actor 训练入口
-│   │   ├── generate_preference_pairs*.py 偏好对生成
-│   │   ├── build_defense_sft_dataset.py  defense-SFT 数据构建 + 测试
-│   │   ├── framework_bridge/             verl / OpenRLHF 数据桥接
-│   │   └── rm_v6_finegrained/            v6 细粒度：候选生成 / LLM-judge / 投票合并 / 过滤
-│   ├── configs/                YAML（accelerate / QLoRA / defense-SFT / merge）
-│   ├── launch_scripts/         RM/SFT/GRPO 启动脚本（含 GPU 拓扑/NCCL）
-│   ├── data_prep/              线上导出 / 数据集生成 / 过滤 / 难负样本挖掘
-│   └── design/                 reward_model_design.md / README_GRPO / Gemma4 SFT 复盘
-│
-├── benchmarks/                  评测基准
-│   ├── BUSINESS_BENCHMARK_GUIDE.md  ⭐ 业务 benchmark 构造指导（给执行 AI 的 spec）
-│   └── RMTBENCH/                外部学术 roleplay 基准（参考锚，en/zh 多轮）
-├── reports/                    评测报告（v69 三方真破功 / AB 对比 / 周报 / probe 报告）
-│   └── framework_logs/          vLLM/verl/LlamaFactory 日志证据索引 + 脱敏摘录
-├── characters_samples/         角色卡示例（产品 IP，仅放 2-3 张做样例）
-└── data/samples/               小样本（SFT 5 条 / test head / LlamaFactory dataset_info）
-```
-
----
-
-## 技术栈
-
-- **训练**：LlamaFactory (SFT/QLoRA) · OpenRLHF (RM) · verl 0.8 (GRPO) · DeepSpeed ZeRO-3 · FSDP · PEFT/LoRA
-- **推理/服务**：vLLM 0.19（rollout + RM 分类 + demo serving）
-- **数据/评测**：Milvus（线上导出）· Gemini / Qwen3 作 LLM-judge（交叉投票）· pairwise + RM breakdown
-- **模型**：Qwen3-30B-A3B-Instruct（MoE）· Gemma-4-26B-A4B-it（MoE + 视觉塔）
-
----
-
-## 注意
-
-- 本仓库**不含**真实用户数据、GB 级训练集、模型权重 —— 见 [DATA.md](DATA.md) 的分层说明与复现路径。
-- 角色卡、产品攻击样本等业务 IP 仅放少量脱敏样例。
-- 生产 Milvus 地址 / DB 名 / 内网 IP 已统一替换为 `<...>` 占位符。

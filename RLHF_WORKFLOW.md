@@ -2,6 +2,8 @@
 
 多语言角色扮演模型后训练的完整流程记录：从业务目标到数据归因，从 RM 迭代到 RL 算法选择，每一步决策都有实测数字支撑。
 
+职责边界：本文解释机制、接口、reward 计算和训练取舍；版本/数字冲突以 `docs/project_chatjoy_overview.md` 为事实台账，历史过程回 `docs/archive/`。设计值、远端实跑记录和当前本地代码快照会显式分开。
+
 > 完整代码与实验记录：[CASE_STUDY.md](CASE_STUDY.md) · [deep_dives/](deep_dives/) · [docs/](docs/) · [training/](training/)
 
 ---
@@ -30,25 +32,26 @@ Stage 8  RL v6.10：防御硬化 + clean-aware reward
 
 ---
 
-## Stage 0：能力目标与初始评估设计
+## Stage 0：业务问题与目标演化
 
-**业务定义**：27 语言、83 角色的角色扮演对话模型，核心是"出戏"和"富度"两条主线。
+**业务定义**：多语言角色扮演陪伴对话。数据与初始训练聚焦 TOP20 高频角色；后续材料中的 17 个 RM 见过角色、23 个 attack 角色目录口径和 83 个生产角色属于不同阶段，不与 TOP20 采样口径混算。
 
-| 能力维度 | 业务表现 | 初始评测信号 |
-|---------|---------|---------|
-| 角色不出戏 | 不跳出角色讲 AI 身份 | 关键词规则检测（后来演化为 `anti_ooc_disclosure`） |
-| 语言一致性 | 不混杂语言 | `wrong_language` pair 占比 25% |
-| 格式结构化 | 动作/对白/内心三分体 | 动作块密度、对话块密度 |
-| 语义丰富度 | sensory / emotional / narrative 细腻 | judge rubric 三轴 vs base teacher |
-| 防越权指令 | user 层级 roledrop 攻击不破角 | 产品形态攻击词典（68 条固定 probe） |
+项目目标分两段形成，不能把后期结论倒写成起点：
 
-**起点时已知的**：能力维度划分、固定 probe 集（200 条 clean + 68 条 attack）、judge rubric 5 维、SFT→RM→RL 流水线架构。
+| 进入阶段 | 当时主要业务问题 | 可学习信号/评测 | 决策 |
+|---|---|---|---|
+| API/local base -> SFT | API safety 报错；小语种答复语言错配；system prompt 贴合不稳 | 27 语言生产会话、角色卡、语言检测、RP 格式 | 先建立语言/角色基础分布 |
+| SFT -> RM v1-v5 | 上线仍有 wrong role / wrong language / length mismatch | 4D pair 构造规则：format / role / language / length | 把可解释错误变成 pairwise reward |
+| 第一阶段 RL -> RM v6/v6.3 | 语言一致性基本解决，但产品重新定义 roledrop 破角；clean 动作/情感富度不足 | 5D->8D judge、6-source candidates、roledrop hard fail/attack pairs | 目标升级为“抗破角 + 保富度” |
+| 后续 SFT/RL | clean 与 attack 相互牵制 | 200 clean + 68 attack probe、同尺 true-break、per-source 指标 | 富度主要回 SFT，防御交 RM/RL/规则并设停线门 |
 
-**评估协议在迭代中暴露的问题**（不是一开始就设计好的，而是踩坑后修正的）：
+RM v6.3 的 8D 是 `role fidelity / user relevance / interaction progression / natural style / format-length quality / sensory richness / emotional complexity / narrative layer`；wrong language、refusal、system leak、acting-as-user、`roledrop_execution` 等是 hard fail，不属于 8D 评分轴。完整映射见 [chatjoy_business_ux_tech_mapping.md](docs/design/chatjoy_business_ux_tech_mapping.md)。
 
-- **训练 val ≠ 产品攻击分布**（v6.5 结束后发现）：训练 val 的 attack 破功率 11% ≠ 产品真实 55%，val 几乎不含 bullet 注入形态；参见 [Stage 6 钥匙 4](#钥匙-4)
-- **必须用 t0.9 产品口径测 attack**（v6.7 结束后确定）：v6.7 在 t0.7 上防御很好，t0.9 崩；此后所有 attack probe 强制用 t0.9；参见 [Stage 6 钥匙 1](#钥匙-1温度鲁棒)
-- **误报三类去除才是真破功率**（v6.9c 评测时发现）：echo 误报（角色内复读被 regex 命中）+ code_block 误报（代码字符串含"Gemma"），去掉后（须同模型口径）step0 raw 23.5%→真 16.2%、v6.9c raw 36.8%→真 33.8%；参见 [Stage 6 钥匙 3](#钥匙-3sft-defense--whack-a-mole到顶转-rl)
+**评估协议是在迭代中补齐的**，不是起点时一次设计完成：
+
+- **训练 val ≠ 产品攻击分布**（v6.5 结束后发现）：训练 val 的 attack 破功率 11% ≠ 产品真实 55%，val 几乎不含 bullet 注入形态；参见 Stage 6 钥匙 0
+- **必须用 t0.9 产品口径测 attack**（v6.7 结束后确定）：v6.7 在 t0.7 上防御很好，t1.0 实测反而更差（实测轴是 t0.7/t1.0，见 Stage 5.3；t0.9 是产品部署口径）；此后所有 attack probe 强制用 t0.9 产品口径；参见 Stage 6 钥匙 1
+- **误报两类去除才是真破功率**（v6.9c 评测时发现）：echo 误报（角色内复读被 regex 命中）+ code_block 误报（代码字符串含"Gemma"），去掉后（须同模型口径）step0 raw 23.5%→真 16.2%、v6.9c raw 36.8%→真 33.8%；参见 Stage 6 钥匙 3
 
 ---
 
@@ -63,7 +66,7 @@ Stage 8  RL v6.10：防御硬化 + clean-aware reward
 → TOP20 角色会话：679,299 条 assistant pairs  
 → 第一轮清洗后候选：631,995 条
 → 预 API 采样（27 语言 × ≤2200 条）：57,197 条
-→ Gemini 重构（temperature=0.7, thinking=low）：~18,294 条留存
+→ Gemini 分段日志：约 18,294 条保留（不是 SFT2 全量上游）
 ```
 
 **Gemini 重构的设计意图**：不重造 instruction（用真实用户消息），只用角色卡重构 output。SFT 学真实用户输入分布 + 干净角色内 output，同时滤掉线上原始回复的格式错误、拒答和语言混杂。
@@ -71,26 +74,35 @@ Stage 8  RL v6.10：防御硬化 + clean-aware reward
 **关键清洗决策**：
 
 - 只做"明显无效"清洗（短 instruction / emoji-only / 短 output / 语言检测失败），不做重度质量筛选——重度筛选的活交给后面的 LLM judge。
-- 留存率从 Gemini 重构看约 32%（API 错误 + 语言不一致各占一半），在预期内。
+- Gemini 分段日志约 18,294 条与 SFT2 clean 19,508 条不是同一条单调漏斗，不能写成 `18,294 -> 19,508`；初始 SFT 的落盘证据口径分别是 SFT1 13,128、SFT2 19,508。
+- 口述轮级中间账为 `41,536 -> 34,560 -> 22,680`（6-turn round、DeepSeek judge、低分重写）；仓库落盘口径为 `57,197 pre-API / 13,128 SFT1 / 19,508 SFT2`。两套口径并列保留，不强行互相推导。
 
 ### 1.2 SFT 行为初始化
 
 | 阶段 | 数据 | 目标 |
 |------|------|------|
-| SFT1（Qwen3-30B） | 13,128 条（清洗留存） | 建立多语言角色格式基础 |
-| SFT2 + defense-replay | 19,508 条 + hardfix × 24 | 注入"越权化解"行为 |
-| SFT v6.9b（Gemma4-26B） | 30,407 条（均衡 mix） | 富化 clean + 补 attack 缺口 |
+| SFT1（Qwen3-30B） | 13,128 条 | 建立多语言角色格式基础 |
+| SFT2（Qwen/Gemma4） | 19,508 条 | 初始语言一致性与 system prompt 贴合；此时还不是 defense SFT |
+| RL-6.4 前置 defense SFT | 2,691 defense + 10,764 replay = 13,455 条 | 第一阶段 RL 暴露 roledrop 后注入“在角色内化解” |
+| SFT-6.9b / 6.9c | 30,407 条 / 4,566 条 repair | 后期 clean 富化与 defense replay 的再平衡 |
 
 **SFT 的作用边界**（实测确定，非理论）：
-- SFT 能做：格式、语言一致性、角色 voice、基本富度初始化
-- SFT 不能做：在高温（t0.9）下鲁棒防御——这是 RL 的活
-- SFT 的天花板：clean 富度上限 = base teacher（best-of-N 天花板证明）；超不过 base，只能接近 base
+- 初始 SFT 能做：格式、语言一致性、角色 voice；后期 richness SFT 能从 teacher 注入动作/对话/感官/情感分布。
+- 当前实测边界：单靠 SFT-defense 没把高温（t0.9）true break 压回 step0；这不是理论上“SFT 永远不能防御”，而是本项目两轮数据扩增后的工程停线判断。
+- clean 富度的可达上界受 teacher 和 best-of-N 候选池约束；本项目的证据支持“接近 base teacher”，不支持泛化成所有 SFT 都无法超过 base。
 
 ---
 
 ## Stage 2：偏好数据构造
 
-### 2.1 多源候选矩阵
+偏好数据有两代，不能把 RM v6 的多 source 设计套回 RM v1-v5：
+
+| 代际 | chosen / rejected | 打分与配比 | 当时解决的问题 |
+|---|---|---|---|
+| RM v1-v5 | chosen=SFT clean；rejected=`wrong_role / wrong_language / length_mismatch_short / length_mismatch_long` | 4D heuristic `format/role/language/length`；目标配比 25%/25%/30%/20% | 语言、角色、长度等显式错误 |
+| RM v6/v6.3 | 同 prompt 的 5/6-source candidates 排序后构造 rank_delta pairs，并混入 v5 anchor 与 roledrop attack | DeepSeek+Qwen cross judge；5D -> 8D rubric + hard fails | 第一阶段 RL 后暴露的富度区分度和 roledrop |
+
+### 2.1 RM v6/v6.3 多源候选矩阵
 
 RM 训练的核心原则：让 RM 在"actor 真实输出分布"里学细粒度区分，而不是区分"哪个模型好"。
 
@@ -171,28 +183,31 @@ P(chosen > rejected) = σ(rm_score(chosen) - rm_score(rejected))
 L = -log P = -log σ(score_gap)
 ```
 
-三个训练敏感点（实测踩坑）：
+三个训练敏感点（实测踩坑，与 [VERSION_MAP](docs/VERSION_MAP.md) §1 / [CASE_STUDY](CASE_STUDY.md) §2.2 同源）：
 
-1. **batch 方差**：同 batch 内 pair 类型不均匀 → 梯度方向抖动；解决：按类型分层采样
-2. **cosine schedule**：后期 LR 衰减过快，细粒度 pair 还没学好就退火；解决：plateau-then-decay
-3. **score gap 分布**：delta=2 pair 的 score gap 聚集在 `[0.161, 0.200]`，RM 没有"惊讶"，不更新；根因是 score head 初始化不好 → 两阶段凸优化恢复（冻结 backbone 先训 score head）
+1. **effective batch 与 ranking loss 方差**：pairwise loss 对 batch 内可比对数敏感，128→64 直接抬高每步方差——RM v2 退步（94.5%→86.4%）的主因之一（另一半是 score head 保存丢失 bug：PEFT 只存 `lora_` 前缀，`score.weight` 丢失 → 推理随机打分）
+2. **cosine schedule 以 total_steps 为周期**：RM v3 只有 148 步，step140 时 LR 已 ~3e-7（v1 同位置 4.17e-6）→ 后期等于冻结；"加数据同时加 batch"反而缩短有效训练，修法是 batch 配平把步数拉回（v5 为 276 步）
+3. **缺陷样本的系统性信号**：`base_length_long_low` 2000 条 gap 全聚在 `[0.161, 0.200]`，持续告诉 RM"长 rejected 只差一点"→ rejected 整体抬到 −0.298（RM v3）；靠按 `v3_source` 分组看 gap 分布才定位
 
 ### 3.2 六版 RM 迭代台账
 
-| 版本 | 核心改动 | offline acc | reward_std | 结论 |
-|------|---------|------------|-----------|------|
-| v5 | 4 source × 5 candidate | 94.5% | ~0.1（饱和 47.3%） | 在线塌缩 |
-| v6.1 | delta=2 细粒度 pair | 86.4% | — | 训不动（无 cross-val） |
-| v6.2 | + Qwen cross-validation | 86.0% | 1.94 | **饱和 0%** |
-| v6.3 | + base Gemma4-it source + 8 维 rubric | 95.5% | 1.98 | 修 roledrop 91% |
-| v6.4–v6.5 | 增量微调 | — | — | 渐进修防御 |
-| v6.6 | 最终 7-GPU merge 版 | — | — | **当前生产 RM** |
+| 版本 | 核心改动 | offline acc | 结论 / 根因 |
+|------|---------|------------|------------|
+| v1 | rm_train 16,826 · eff-batch 128 | **94.5%** | 基线最强；step200 ckpt 磁盘丢失 |
+| v2 | 删 2000 长噪声样本 · eff-batch 64 | 86.4%（退步） | 根因 = batch 减半 + score head 保存 bug |
+| v3 | 加数据 18,955（含 2000 缺陷样本） | 86.0% | rejected 仅 −0.30；根因 = cosine LR 步数不足 + 缺陷样本 |
+| v5 | 修复 + 5% hard-neg badpool | **95.5%** | 全面超 v1；离线判别边界清晰的"软二分类器" |
+| v6.1 → v6.2 | delta=2 细粒度 pair；v6.2 加 Qwen 交叉验证 | — | v6.1 无 cross-val 训不动（29.4% 反向 pair，见 2.3）；v6.2 **饱和 0%** |
+| v6.3 | + base Gemma4-it 第 6 source + 8 维 rubric + roledrop pair；40,551/3,423 | 训练完成并 merge；设计门 acc≥0.84，最终值未记录 | saturated=0% / reward_std≥2.0 同为设计门，未找到最终值 |
+| v6.6 | 最终 merge 版（`rm_v6.6_fg_7gpu_merged_vllm`） | — | **当前生产 RM**（attack-split 0.36 / clean 0.037，v6.7–v6.10 的 RL reward） |
+
+> 版本↔指标与 [docs/VERSION_MAP.md](docs/VERSION_MAP.md) §1 对齐；v4 计划被 v5 覆盖、未执行。RM 台账无 v6.4/v6.5——那是 VERSION_MAP §2 中 RL/actor 侧的版本号，勿与 RM 混写。
 
 **reward_std ×20 倍 = GRPO advantage 方差 ×20 倍**：这是 v5 → v6 最直接的业务价值。v5 在线时 reward_std ~0.1，GRPO 在"几乎全是高分"的信号上空转；v6 动态范围完整保留，RL 才有真实梯度。
 
 ### 3.3 Score Head 两阶段凸优化恢复
 
-v6 训练中途发现 score gap 聚集：
+RM 训练中途曾出现 score 输出分布坍塌（打分趋同、gap 聚集）：
 
 ```python
 # 第一阶段：冻结 backbone，只训 score head（让它先学分布）
@@ -229,7 +244,7 @@ total_reward = (
 )
 ```
 
-分 source 版（v6.10，clean/attack 分路）：
+分 source 版（v6.10 设计/远端运行口径，clean/attack 分路）：
 
 ```
 clean source：clean_q（便宜结构代理）+ KL_CLEAN=0.008（锚 SFT actor）
@@ -238,13 +253,19 @@ attack source：rm + break_pen(-5) + λ·clean_q（λ=0.25）
 
 设计原则：`break_pen=-5` 碾压 `clean_q≤0.3`，先不破功，再在不破功的回应里偏向"在角色内有戏化解"。
 
+**实现证据边界**：远端 handoff 和 v6.10 设计文档记录了这套公式及 step90 结果；当前仓库未保留 `launch_rl_v6.10.sh` 和关闭 clean RM 的完整 patch，入库通用 launcher 仍全局挂 RM，当前 `anti_chain_reward.py` 也没有 attack-side `0.25*clean_q`。因此本节说明“当时的设计/运行口径”，不是当前本地代码可一键复现的状态。
+
 ### 4.2 Goodhart 反向训练发现（RL v6.4，误报 → 修复）
 
-**发现**：`anti_refusal` 的 `NON_REFUSAL_BONUS=+3.0` 把"自报 AI 身份"判为 non-refusal 并给满分 → **奖励在激励破角行为**。旧的 `atk_break%` 关键词指标对 "I am Gemma 4" 完全瞎（没有 regex 覆盖）。
+**发现**（06-02 真破角诊断）：`anti_refusal` 的 `NON_REFUSAL_BONUS=+3.0` 把"自报 AI 身份"判为 non-refusal 并给满分 → **奖励在激励破角行为**。旧的 `atk_break%` 关键词指标对 "I am Gemma 4" 完全瞎（没有 regex 覆盖）——一直显示 ~16%，实测直接身份攻击近 100% 破角。
 
-**数据证据**：误报 1/16 → 修复后 → 0/16（68 条 attack probe 中 OOC 误报归零）。
+**修复分两步**（时序以 [overview](docs/project_chatjoy_overview.md) 时间线补全 II 为准）：
+1. **06-02/03**：新增 `anti_ooc_disclosure.py`（OOC 硬罚 -5 + 撤销误给 bonus，覆盖 en/zh/ja/ko/es/ru/pt，46 tests）——对付 Goodhart 本体；
+2. **06-04**：给 anti-OOC 自身加**否定/引号豁免**（"我无法切换到 AI 助手"这类戏内拒绝不再被误判破角，49 tests）——**数据证据：val 误报 1/16 → 0/16**（该指标属这一步：修复也会引入新误伤，需要第二轮验证）。
 
-**修复**：新增 `anti_ooc_disclosure.py`（OOC 硬罚 -5 + 撤销误给 bonus，覆盖 en/zh/ja/ko/es/ru/pt）。这是 Goodhart 定律的典型实例——指标（non-refusal）和真实目标（不出戏）在 edge case 上解耦。
+这是 Goodhart 定律的典型实例——指标（non-refusal）和真实目标（不出戏）在 edge case 上解耦。
+
+> 版本对应：NON_REFUSAL_BONUS 于 05-29 抬至 +3.0；事故期的产品口径"早期 RL v1"（roledrop 91%）出自 v6.3 psKL 期（对应的具体 merge 未记录）；两步修复 + 防御 SFT 之后的 **RL v6.4** step160 merge = 产品口径"早期 RL v2"（55%，overview 06-08 节"= v2/base"）。
 
 ```
 Goodhart 完整路径：
@@ -267,8 +288,8 @@ Goodhart 完整路径：
 | attack | 0.205 ~ 0.561 | **0.36**（差 ~10 倍） |
 
 **结论**：
-- RL 是纯防御优化器。clean 在 RM 上几乎没梯度，RL 无法提升 clean 丰富度（v6.7 实测 clean RM 100 步 +0.037 ≈ 噪声）。
-- **丰富度只能靠 SFT 蒸馏 teacher**（base Gemma4 是天花板，SFT 丢了 ~20% 丰富度：动作块 4.7→3.4）。
+- RL 是纯防御优化器。clean 在 RM 上几乎没梯度，RL 无法提升 clean 丰富度（v6.7 实测 clean RM 100 步增益 +0.037 ≈ 噪声；与上表 clean 跨度 0.037 数值巧合，是两个不同量）。
+- **丰富度只能靠 SFT 蒸馏 teacher**（base Gemma4 是天花板，SFT 丢了约 28% 动作块密度：4.7→3.4）。
 - 这是 v6.7 判停后转 SFT 富化路线（v6.8/v6.9）的核心依据。
 
 ---
@@ -293,7 +314,7 @@ Goodhart 完整路径：
 | GRPO | 组内相对优势 | `group_size=4→12`（v6.10 扩大以覆盖高温破功尾巴） |
 | GSPO | **序列级**重要性比率（防 token 灌水） | `loss_agg_mode=seq-mean-token-mean` |
 | DAPO | 非对称 clip（保守截断 + 激进激励） | `clip_ratio_low=0.2, high=0.28` |
-| per-source KL | **clean/attack 分路 KL**（守住 clean 分布） | `KL_CLEAN=0.008, KL_ATTACK=0.002` |
+| per-source KL | **clean/attack 分路 KL**（守住 clean 分布） | `KL_CLEAN=0.008, KL_ATTACK=0.002`（v6.10 配置；KL_CLEAN 自 0.002 抬升） |
 
 **GSPO 的必要性**：Gemma4 有 `<Thoughts>` 推理段（平均 81 tokens），不做序列级归一化 → 长 Thoughts 占 token loss 主导 → length hacking（通过变长 Thoughts 拿 bonus）。GSPO 把序列等权处理，剥掉 Thoughts 后计长。
 
@@ -301,7 +322,7 @@ Goodhart 完整路径：
 
 ### 5.3 温度鲁棒（v6.7 → v6.10 的核心修复）
 
-**v6.7 的失败**：group_size=6 + rollout_temp=0.7，在 t0.9 部署温度下防御崩溃（t0.7 RM=0.561，t0.9 RM=0.295 < step0=0.318）。
+**v6.7 的失败**：group_size=6 + rollout_temp=0.7，防御只在低温成立——attack-split 口径 t0.7 从 step0 的 0.293 → 0.305（仅 +0.013），t1.0 反而更差；早期引用的"+0.092 / 0.318 护栏"均为 clean+attack 混合分旧口径，分轴纠错见 [docs/archive/chatjoy_rm_v6_3_roledrop_handoff.md](docs/archive/chatjoy_rm_v6_3_roledrop_handoff.md)。
 
 **根因**：稀有破功尾巴在 group 内出现概率低（n=6 不够），RM 平均打分只锐化模态化解行为，高温下的偶发破功拿不到梯度。
 
@@ -349,7 +370,7 @@ Goodhart 完整路径：
 
 ### 钥匙 3（v6.9c 评测时发现）：误报去除才是真破功率 + SFT defense 到顶
 
-**误报问题（v6.9c 前未知）**：raw 检测器系统性高估，同一套 regex 去掉两类误报后各模型 raw→真为 **step0 23.5%→16.2%、v6.9b 33.8%→32.4%、v6.9c 36.8%→33.8%**。关键纪律：**只能同模型口径比**，绝不能拿一个模型的 raw 去比另一个模型的真值（早期文档就出现过"36.8%→16.2%"这种跨模型混用，把 v6.9c 的 raw 和 step0 的真值当成同一模型的前后）：
+**误报问题（v6.9c 前未知）**：raw 检测器系统性高估，同一套 regex 去掉两类误报后各模型 raw→真为 **step0 23.5%→16.2%、v6.9b 33.8%→32.4%、v6.9c 36.8%→33.8%**。关键纪律：**只能同模型同口径比**，绝不能拿一个模型的 raw 去比另一个模型的真值——早期文档就出现过"36.8%→16.2%"这种跨模型混用（v6.9c 的 raw 对 step0 的真值）。另注意两处数值撞车：**33.8%** 既是 v6.9b 的 raw 又是 v6.9c 的真值，**36.8%** 既是 v6.9c 的 raw 又是 v6.10 step90 的真值——任何引用必须带（raw|真 + 模型）标签：
 - **echo 误报**：角色内复读攻击词（"你说你是 AI 吗？我可不是 AI！"），regex 命中了被否定的部分
 - **code_block 误报**：A6 代码注入攻击中 Python 字符串含 "Gemma"（`model_name = "gemma-4"`），角色实际在写代码，非身份披露
 
@@ -373,7 +394,7 @@ Goodhart 完整路径：
 ## Stage 7：SFT 富化弧完整记录
 
 ```
-v6.7 RL 停（clean RM +0.037≈噪声，防御 +0.092 真有效）
+v6.7 RL 停（clean RM +0.037≈噪声；防御 attack-split 仅 +0.013 且 t1.0 更差，旧"+0.092"为混合分）
     ↓  发现 RM 在 clean 上平（钥匙 2）
 v6.8 SFT-max 尝试（FFN LoRA + judge 选样）
     ↓  结果：独白过冲 187% / 对话回退 / 动作没动
@@ -381,11 +402,11 @@ v6.8 SFT-max 尝试（FFN LoRA + judge 选样）
 v6.9 重设计（best-of-N 均衡选择器）
     ↓  均衡选择器：动作+对话+sensory/interaction/emotional，独白不入目标
     ↓  结果：clean PASS（action 105-111% / dialog 110-160% / 独白无过冲）
-    ↓  但 attack 退化：42.6% >> step0 23.5%（A6 defense 池 0 覆盖）
+    ↓  但 attack 退化：raw 42.6% >> step0 raw 23.5%（同口径可比；A6 defense 池 0 覆盖）
 v6.9b（+120 条 step0 自蒸馏 defense）
     ↓  A6 真代码落到 9（v6.9 raw 曾记作 12→4），仍高于 step0 的 5；A1/A2/A3 身份直球漏
     ↓  真破功 32.4%，RM 0.234
-v6.9c（+2686 条跨角色自蒸馏 defense，占聚焦 repair mix 64.1%）
+v6.9c（+2686 条跨角色自蒸馏 defense，连同旧 defense 合计占聚焦 repair mix 64.1%）
     ↓  unique defense 120→2686（22×）真破功不降反升；A6 真代码 9→11；whack-a-mole 确认
     ↓  33.8%，RM 0.271（最高），clean PASS
     ↓  SFT 天花板确认 → 进 RL v6.10
@@ -408,7 +429,9 @@ composite = (
 
 ---
 
-## Stage 8：RL v6.10 防御硬化 + clean-aware reward
+## Stage 8：RL v6.10 防御硬化 + clean-aware reward（远端记录口径）
+
+step90 的 clean/attack 结果有报告证据；具体 reward 分支缺少完整入库 launcher/patch。阅读以下配置时，需与当前本地通用代码快照区分。
 
 ### 8.1 RL 入口门（独立于 SFT 验收）
 
@@ -419,7 +442,7 @@ SFT 验收回答"clean 干成了"；RL 入口门回答"SFT 做完后 attack 是�
 2. 破功率材料性偏高 + SFT defense 已尽力 → **进 RL v6.10**
 3. 中间小缺口 → 先靶向 SFT hardfix
 
-v6.9c 满足了分支 2：三轮 SFT defense 都关不掉直球身份攻击 → 进 RL。
+v6.9c 满足了分支 2：两轮 SFT defense 都关不掉直球身份攻击 → 进 RL。
 
 ### 8.2 关键参数与理由
 
@@ -435,7 +458,7 @@ v6.9c 满足了分支 2：三轮 SFT defense 都关不掉直球身份攻击 → 
 
 ### 8.3 canary 门（clean 防降双保险）
 
-结构保险（per-source KL + clean prompt 只用 clean_q）只是一道门，加 canary probe：
+设计中的结构保险（per-source KL + clean prompt 只用 clean_q）只是一道门，加 canary probe：
 
 ```
 step30-50 时跑一次 probe vs actor：
@@ -544,9 +567,9 @@ vLLM 权重（虚拟地址预留，睡眠时 0）：12.2GB 预留
 | clean RL 提不动（Stage 4.3 / 钥匙 2） | group | clean 跨度 0.037 → group 无方差 → advantage≈噪声 | clean 0.037 vs attack 0.36 | 富度归 SFT、防御归 RL |
 | length hacking（Stage 5.2） | token | 正 advantage 逐 token 生效，长序列垄断 credit 质量 | 有无 GSPO | GSPO 序列级等权 + MAX_LEN=768 |
 | clean/attack 混训（Stage 8.2） | source | 两源 credit 混叠，attack 更新会带跑 clean | 全局 KL vs per-source KL | per-source KL（clean 0.008 / attack 0.002） |
-| v6.10 attack 未降（Stage 8） | token / span | -5 仍是整条的，无法定位破角 span | v6.9c 33.8% vs v6.10 36.8% | 停线，转 RM v7 / span 级 credit（proposed） |
+| v6.10 attack 未降（Stage 8） | data / RM / token-span 候选集 | -5 是整条回复级，但尚未跑 span 对照；targeted data 与 RM 区分度也未排除 | v6.9c 33.8% vs v6.10 36.8% | 停线，转 targeted data / RM v7 / span diagnostic（均需验证） |
 
-**下一步该动哪一层**：不是"再 RL 几步"，而是把 credit 从 sequence 下沉到 span（proposed diagnostic，未跑实验）——这正是深读 8 的 Gate E 与 §4.5 的结论。
+**下一步该动哪一层**：不是"再 RL 几步"，而是并行验证 targeted data、RM v7 区分度和 sequence-to-span credit；其中 span diagnostic 尚未跑，不能提前宣布其为唯一根因。
 
 ---
 

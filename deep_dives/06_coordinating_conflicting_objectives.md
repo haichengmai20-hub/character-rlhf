@@ -1,8 +1,12 @@
 # 深读 6 — 多目标协调：RLHF 用三种机制消解冲突，选错机制 = 大多数失败的根源
 
+> 阅读路线：先看 [深读 0 — 面试综合路线](00_interview_synthesis.md)，再按本篇专题深挖。
+
+> **版本命名**：本篇保留原始实验号叙述；哪些是真改进、哪些只是 run/restart/失败实验，以 [VERSION_MAP](../docs/VERSION_MAP.md) 和 [project_chatjoy_overview](../docs/project_chatjoy_overview.md) 的阶段映射为准。
+
 > 本篇展示的能力：**把"clean 富度 / attack 防御 / 动作密度 / 语义忠实度 / 语言一致性"这一组互相拉扯的目标，归到 RLHF 仅有的三种协调机制上——阶段分配、阶段内聚合、per-source 解耦——并证明本项目几乎每一次失败都是"用错了机制"，每一次成功都是"换对了机制"。**
 >
-> 这是 [深读 2–5](.) 的 capstone：前面分别讲 RM、RL 动力学、富化-防御张力、何时转 RL；本篇把它们放进同一张多目标协调的框架里。数字均来自仓库内可核对记录（`CASE_STUDY.md` / `v69_reconcile_report.md` / 各设计文档）。
+> 这是深读 2–5 的 capstone：前面分别讲 RM、RL 动力学、富化-防御张力、何时转 RL；本篇把它们放进同一张多目标协调的框架里。数字均来自仓库内可核对记录（`CASE_STUDY.md` / `v69_reconcile_report.md` / 各设计文档）。
 
 > ## Attribution Lens
 > 本篇把失败归因到"**选错了协调机制层**"：机制①阶段分配≈**data/SFT vs GRPO** 的分工、机制②阶段内聚合≈**reward 组件**的加权/门控、机制③per-source 解耦≈**source 层**分路。这三层与 [深读 8](08_credit_assignment_in_character_rlhf.md) 的 credit 层级一一对应——协调机制选错，本质就是 credit 分到了错误的层。
@@ -69,7 +73,7 @@
 
 ### 3.3 选错聚合 = reward hacking 的根源（本项目最贵的一课）
 
-**`anti_refusal` 的 Goodhart bug 就是聚合选错**：把"不拒绝"做成 **+3.0 的加权和项**（additive），于是"自报身份"这种破功因为"不含拒绝词"被加了 +3.0 → **reward 在奖励破功**（[深读 2 / CASE_STUDY 节点 5](../CASE_STUDY.md)）。
+**`anti_refusal` 的 Goodhart bug 就是聚合选错**：把"不拒绝"做成 **+3.0 的加权和项**（additive），于是"自报身份"这种破功因为"不含拒绝词"被加了 +3.0 → **reward 在奖励破功**（[深读 2 / CASE_STUDY 节点 5](02_rm_data_reward_and_attribution.md)）。
 
 - 错在哪：**安全（不破功）是约束，不是偏好**，却用了可线性权衡的加权和 → 一个目标的代理（"非拒绝"）反向奖励了另一个目标的失败（破功）。
 - 修法：换成**字典序门控**——`anti_ooc_disclosure` 破功硬罚 −5 + 撤销那 +3.0，使排序变成 **戏内化解 ≻ 拒绝 ≻ 破功披露**（全 TDD，不重训 RM，误报 1/16→0/16）。
@@ -91,12 +95,14 @@
 
 "想贴近"和"想离开"是同一个旋钮上的相反方向——**单一 KL 系数无法同时满足**。per-source KL 用两个系数把这个矛盾拆开。reward 组装也分源：
 
+v6.10 设计/远端记录口径如下；step90 结果可追溯，但完整 launcher/reward patch 未入库：
+
 ```
-clean prompt:  reward = clean_q（全量）          + 紧 KL（守富度，不让 RL 推离）
-attack prompt: reward = rm + break_pen + λ·clean_q + 松 KL（让防御移动）   λ≈0.25
+clean prompt:  reward = clean_q（全量）          + 紧 KL（设计口径）
+attack prompt: reward = rm + break_pen + λ·clean_q + 松 KL             λ≈0.25
 ```
 
-> 这就是"提防御又不丢 clean 富度"在**一次 RL run 里**能成立的原因：两类输入的梯度被路由到不同的 reward/KL，互不污染（[v6.10 设计](../docs/chatjoy_rl_v610_defense_clean_aware_design.md)）。没有 per-source，attack 侧的更新会顺着 KL 把 clean 分布一起带跑。
+> 这就是"提防御又不丢 clean 富度"在**一次 RL run 里**能成立的原因：两类输入的梯度被路由到不同的 reward/KL，互不污染（[v6.10 设计](../docs/design/chatjoy_rl_v610_defense_clean_aware_design.md)）。没有 per-source，attack 侧的更新会顺着 KL 把 clean 分布一起带跑。
 
 ---
 
@@ -117,7 +123,7 @@ attack prompt: reward = rm + break_pen + λ·clean_q + 松 KL（让防御移动�
 [深读 4](04_richness_defense_tension_and_sft_ceiling.md) 证明 clean 富化 SFT 会侵蚀身份防御（真破功 step0 16.2% → 富化后 ~40%），且这是行为空间里的 Pareto 张力，不是数据量问题（unique defense 120→2686，22×，真破功不降反升）。这个最深的冲突，**任何单一机制都解决不了**，v6.5→v6.10 整条弧其实是在叠三层机制：
 
 1. **① 阶段分配**：富度归 SFT、防御归 RL（别在 SFT 里同时硬追，那是 whack-a-mole）。
-2. **③ per-source 解耦**：RL 里 clean 只拿 clean_q + 紧 KL（守 SFT 注入的富度），attack 才拿 rm + break_pen（改防御）。
+2. **③ per-source 解耦**：v6.10 设计里 clean 只拿 clean_q + 紧 KL，attack 才拿 rm + break_pen；结果上 clean held，但本地代码快照不足以复现完整 reward 分支。
 3. **② 字典序门控**：attack 侧 break_pen −5 碾压 clean_q，保证"不破功"先于"有戏"。
 
 外加 [深读 5 门 D](05_when_to_move_from_sft_to_rl.md) 的 **canary 门**（step30-50 先验证 clean 不退再放行）当兜底。**一个冲突越深，需要叠的机制层数越多**——这就是为什么 richness⇄defense 花了整条 v6.x 弧，而"动作 vs 对话"在 SFT 选择器里调个权重就够了。

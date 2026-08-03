@@ -1,8 +1,14 @@
+<!-- CODEx归档说明: begin -->
+# 归档说明
+
+本文件是 2026-06-18 之后关于 quality-aware 下一轮训练的原始设计草案，保留用于追溯“为什么 v6.10 后转向 RM v7 / targeted data / benchmark”。它不是当前面试主线入口；面试先看 `../../README.md`、`../../INTERVIEW_SCRIPT.md` 和 `../project_chatjoy_overview.md`，本文件只在追问“下一步怎么做”时查证。
+
+<!-- CODEx归档说明: end -->
 # 下一步训练设计:把角色扮演质量恢复到 base 天花板(quality-aware 全链路)
 
 > 触发:2026-06-18 GPT LLM-judge 头对头(**只看角色扮演质量**)判 **base > RL(step90)**。
 > 因 RL step90 的 clean 被 KL 锚定到 actor=v69c(clean prompt 只拿 length-bonus+KL),∴ **base > v69c 也成立 = 整条 rich-CJK SFT 链从未到 base 质量**。
-> 关联:[[project_chatjoy_overview]] §⑦、[[chatjoy-eval-paradigm]]、[[chatjoy_rl_v610_defense_clean_aware_design]] §6。
+> 关联：[项目总览](../project_chatjoy_overview.md)、[评测范式](../design/chatjoy_eval_paradigm.md)、[RL v6.10 设计](../design/chatjoy_rl_v610_defense_clean_aware_design.md)。
 
 ## GPT 判的 5 维(base 全胜,= 现成 rubric)
 ① 角色状态递进(高傲→恐惧→被迫谈判→失控,心理链路连续) ② 场景沉浸 ③ **人设稳定**(base "傲慢大小姐被秘密压制"稳;RL 滑向"普通受害者",大小姐感弱) ④ 情绪张力 ⑤ 用户承接(对每步动作接得细腻)。

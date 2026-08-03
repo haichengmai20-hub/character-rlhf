@@ -1,3 +1,52 @@
+<!-- CODEx整理摘要: begin -->
+# RM v6 Fine-grained Handoff 整理摘要
+
+本文件下面保留原始 RM v6 fine-grained 交接日志；如果只是面试复盘，先读本摘要，再回 `../project_chatjoy_overview.md` 看全链路。
+
+## 这个阶段要解决什么
+
+RM v1-v5 主要区分 wrong role、wrong language、length mismatch。进入 RL 后发现两个新问题：
+
+- 破角/roledrop：模型可能直接承认自己是模型、执行系统/代码类指令，虽然不是拒答，却破坏角色。
+- 富度不足：clean 回复动作块、感官、情绪和叙事层次不足，RM v5 对这些细粒度质量信号不敏感。
+
+RM v6/v6.2 先把“细腻角色扮演质量”引入 RM，不再只靠启发式错例；user-level roledrop attack 的显式 pair/hard fail 是随后 RM v6.3 的新增杠杆。两者共同构成后期“保富度 + 抗破角”双目标，但不要把 v6.3 的能力提前写到 v6.2。
+
+## 数据与 judge 设计
+
+早期 v6/v6.2 使用 5-source 多候选：
+
+| source | 说明 |
+|---|---|
+| Gemma4 SFT t0.7 / p0.8 | SFT 模型低温采样 |
+| Gemma4 SFT t1.0 / p0.95 | SFT 模型高温采样 |
+| Qwen SFT t0.7 / p0.8 | 另一 SFT 家族候选 |
+| RL step550 t0.7 / p0.8 | RL actor 低温候选 |
+| RL step550 t1.0 / p0.95 | RL actor 高温候选 |
+
+核心流程：同一个 prompt 生成多路候选，DeepSeek judge 和 Qwen judge 交叉排序，按 rank delta 生成 preference pair。口述中的 `best > good > mid > bad > worse` 是这个排序逻辑的直观说法；在文档/代码里更准确写 ranked candidates / rank_delta。
+
+## 关键数字
+
+| 阶段 | 数字 | 说明 |
+|---|---:|---|
+| v6.2 cross-validated fine pairs | 27,287 | 保留率 73.1%，用 DeepSeek + Qwen 交叉过滤 |
+| v6.2 train/eval | 42,270 / 3,614 | LR 5e-6 版本，acc 0.802，wrong 18.0% |
+| v6.2 结论 | underfit | 后续建议 LR 9e-6、LoRA r128/alpha256、target 扩到 q/k/v/o/up/down |
+
+## 训练配置口径
+
+- base：Gemma4 SFT2 / Gemma4 RM 路线。
+- 并行：ZeRO-2 + QLoRA 4bit。
+- 常用 max_len：3072。
+- v6.2 原 run：LR 5e-6，后续 A+C 口径改为 LR 9e-6。
+- LoRA：从 r64 逐步升级到 r128/alpha256；target 从 q/k/v/o 扩到 q/k/v/o/up/down。
+
+## 和 v6.3 的关系
+
+v6 fine-grained 解决了“RM 看不见富度”的方向问题，但仍需要更强 roledrop attack 数据和更稳 judge。v6.3 在本阶段基础上新增 pure Gemma4-it base 第 6 source，并把 v5 anchor、clean/fine roleplay pair、roledrop attack pair 混合成最终 RM v6.3 训练集。
+
+<!-- CODEx整理摘要: end -->
 # ChatJoy RM v6 Fine-Grained Handoff
 
 更新时间：2026-05-12 20:50 CST

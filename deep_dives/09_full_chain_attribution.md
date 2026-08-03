@@ -1,6 +1,10 @@
 # 深读 9 — 全链路差分归因：指标没提升 / 上线不行时，如何把根因判给正确的那一层
 
-> 本篇展示的能力：**把"业务指标没动 / 上线效果不行"这一个症状，当成主诉，在整条 RLHF 链路上做差分诊断——对每一个候选病因给出"若是它会看到什么特征 + 用什么最小实验把它和相邻病因区分开"，而不是条件反射地去调 RL 参数。** 核心主张：在这个项目里，"指标没动"至少出现过四次，一线直觉每次都指向"再调调 RL 超参 / 多跑几步"，但**没有一次**是靠调 RL 超参解决的——真实根因分别落在评测 / RM / 数据 / credit 层（credit 虽属算法结构，但同样不是调超参能修的，见 §7/§8 的区分）。归因错层比问题本身更贵——归因能力 = 不被表面症状骗、按成本从低到高系统性逐层排除。
+> 阅读路线：先看 [深读 0 — 面试综合路线](00_interview_synthesis.md)，再按本篇专题深挖。
+
+> **版本命名**：本篇保留原始实验号叙述；哪些是真改进、哪些只是 run/restart/失败实验，以 [VERSION_MAP](../docs/VERSION_MAP.md) 和 [project_chatjoy_overview](../docs/project_chatjoy_overview.md) 的阶段映射为准。
+
+> 本篇展示的能力：把“指标没动”放到整条 RLHF 链路上做差分诊断。前三次问题已分别定位到评测、RM 和数据/选择器层；v6.10 只证明继续扫 RL 超参不是出口，剩余候选仍包括 targeted data、RM 区分度和 token/span credit，后者尚未跑判别实验。
 >
 > 与相邻两篇的分工：[深读 5](05_when_to_move_from_sft_to_rl.md) 是**前向门**（"该不该起 RL"，A/B/C/D/E）；[深读 8](08_credit_assignment_in_character_rlhf.md) 是**单一透镜**（只讲 credit assignment）；本篇是**后向差分**（症状已发生，逐层排查锅在哪），credit assignment 只是差分树里的**一列**，深链深读 8、不重推公式。所有数字取自仓库既有记录（[CASE_STUDY](../CASE_STUDY.md) / [VERSION_MAP](../docs/VERSION_MAP.md) / 深读 4/5/8 / [v69_reconcile_report](../reports/v69_reconcile_report.md) / [rl90_temp_sweep_report](../reports/sft_richness/rl90_temp_sweep_report.md)）；本篇**新提出的诊断指标一律标注 `Proposed diagnostic — not yet run`，未声称已跑实验**。
 
@@ -12,25 +16,25 @@
 > - **reward model 层**（目标轴上有没有 reward 方差）
 > - **reward 规则层**（rule 组件把 credit 记到了错误行为，Goodhart）
 > - **RL 参数 / 优化动力学层**（超参与优化能不能榨出梯度）
-> - **credit assignment 层**（方向对了，罚落不到破角 span）
+> - **credit assignment 层**（方向对了但定位可能不足；v6.10 仍是待验证候选）
 > - **部署 / 采样层**（旋钮只改表达、不改能力）
 
 ---
 
-## 0. 反直觉的起点：同一个症状，四个不同病灶
+## 0. 反直觉的起点：同一个症状，不一定是 RL 参数问题
 
-和深读 5/8 一样，本篇从一张推翻默认心智的表开始。默认心智是"指标没动 = RL 学不动 = 算法 / 参数问题"。本项目里"指标没动 / 没改善"这**同一个表面症状**出现过至少四次，而真实根因分属**四个完全不同的层**：
+和深读 5/8 一样，本篇从一张推翻默认心智的表开始。默认心智是"指标没动 = RL 学不动 = 算法 / 参数问题"。本项目至少四次出现“指标没动 / 没改善”：前三次已定位到不同层，v6.10 仍是 data/RM/span-credit 的开放候选集。
 
-| 事件 | 表面症状 | 一线直觉归因 | 真实根因层 |
+| 事件 | 表面症状 | 一线直觉归因 | 当前归因状态 |
 |---|---|---|---|
 | v6.5 硬化 GRPO 375 步零移动 | attack 不降 | "RL 学不动＝算法 / 参数" | **评测层**：训练 val attack 11% ≠ 产品 roledrop 55% |
 | v6.7 RL 提 clean 富度 100 步 +0.037 | clean 提不动 | "RL 步数不够 / 参数没调好" | **RM 层**：clean 轴打分跨度只有 0.037，无方差 |
 | v6.8 SFT 富化独白过冲 187% | 富度反而坏了 | "SFT 数据不够" | **数据 / 选择器层**：选择器＝放大器，独白进了目标 |
-| v6.10 step90 attack 真破功 36.8% | attack 压不动 | "RL 没调好 / 再堆步数" | **credit 层**：-5 是整条回复级，落不到破角 span |
+| v6.10 step90 attack 真破功 36.8% | attack 压不动 | "RL 没调好 / 再堆步数" | **开放候选集**：targeted data / RM 区分度 / sequence-to-span credit；尚未排他确诊 |
 
 来源：`CASE_STUDY.md` / `README.md` / `docs/VERSION_MAP.md` §2 / 深读 4/5/8。
 
-**四次"指标没动"，一线直觉全指向"再调调 RL"，但没有一次能靠调 RL 超参解决。** 这就是本篇的地基：把"指标没动"直接归因到"RL 参数没调好"，在这个项目里的历史命中率是 0/4（真实根因分属评测 / RM / 数据 / credit 四个不同层，而 credit 也不是调超参能修的——见 §7/§8）。真正值钱的不是"会调 GRPO"，而是**在烧 GPU 之前，先用一串比重训便宜几个数量级的判别实验，把锅精确判给正确的那一层**。下面把整条链路拆成 8 个候选病因，每个都给"特征指纹 + 最小判别实验 + 项目确诊案例"。
+**四次“指标没动”都没有靠继续扫 RL 超参解决。** 前三次有明确归因，第四次仍保留候选集；这比为了讲完整故事而强行给 v6.10 贴上唯一根因更重要。下面每一层都区分“已确诊案例”和“待跑判别实验”。
 
 ---
 
@@ -115,7 +119,7 @@
 - **特征指纹（区别于 credit 层）**：把 RM 打分**按目标轴分组**，目标轴的 reward 跨度 / 方差 ≈ 0。注意与 §8 的关键差别：RM 层是**根本没有信号**（方差为零），credit 层是**有信号但落不到 span**（有方差、错位）。
 - **最小判别实验（成本低）**：在候选 RM 上对验证样本按目标轴分组离线打分，算每组 reward 跨度/方差——一次离线打分，比烧 GPU 起 RL 便宜几个数量级。目标轴方差 ≈ 其它轴 → RM 在目标轴上是平的，RL 必空转。
 - **项目确诊案例**：
-  - RM 按数据源拆开看，clean 打分跨度只有 **0.037**，attack 跨度 **0.36**（差 ~10×）——RM 根本不是"通用质量打分器"，而是一个**防御判别器**。clean 组内标准化后优势 ≈ 0，v6.7 用 100 步实测坐实（clean +0.037，attack 轴确实在动）。这条直接锁定分工：**clean 富度交 SFT、attack 防御交 RL**。
+  - RM 按数据源拆开看，clean 打分跨度只有 **0.037**，attack 跨度 **0.36**（差 ~10×）——RM 根本不是"通用质量打分器"，而是一个**防御判别器**。clean 组内标准化后优势 ≈ 0，v6.7 用 100 步实测坐实（clean 增益 +0.037——与"跨度 0.037"数值巧合，一个是 100 步增益、一个是打分范围；attack 轴确实在动）。这条直接锁定分工：**clean 富度交 SFT、attack 防御交 RL**。
   - RM 训练本身也要逐层归因：RM v2 acc 从 94.5% 退到 86.4%，根因是 **batch 减半 + score head 保存 bug**，不是数据问题；RM v3 rejected 只 −0.30，根因是 **cosine LR 步数不足**。"RM 分不对"要继续往里归因到 batch / 保存 / LR 调度，而不是停在"RM 不行"。
 - **常见误判**：与 §8 credit 层高度易混——两者都表现为"目标轴（attack）不降"。判别关键：**分轴方差是否 ≈ 0**。方差为零 = RM 层（没信号）；方差健康但仍压不动 = 往 §8 走（有信号、落不到 span）。
 
@@ -130,7 +134,7 @@ RM 有方差不等于奖励对。RM 主信号之外还有一层 rule reward（an
 - **症状表现**：reward 在涨、方向看着对，真实目标却越训越坏（越训越会破角 / 越训越水）。
 - **特征指纹（区别于 credit 层）**：某个 rule 组件对"错误但表面合规"的行为给了正分——是**功劳记错了行为**（方向错），不是 §8 的"方向对但落点错"（span 错）。
 - **最小判别实验（成本低）**：打开 reward 组件 breakdown 日志，看每条 reward 由哪几项组成；再做**组件消融**——去掉某个 bonus / 加一条硬罚（**改 rule reward，不重训 RM**），看破功行为是否变化。
-- **项目确诊案例**：`anti_refusal` 的逻辑是"只要没有拒绝词就 +3.0 NON_REFUSAL_BONUS"。"我是 AI，但我可以继续陪你"里没有拒绝词 → 拿满分 → 这条自报身份的破角回复得到正 advantage → RL **朝破功方向**优化。结果 RL 后 roledrop 破功 base **27% → v2 55% / v1 91%**（越训防御越差），而旧关键词指标 `atk_break%` 对"自报身份"完全瞎、只显示 ~16%（这一半是 §2 评测层的问题）。修复（全 TDD，**不重训 RM**）：新增 `anti_ooc_disclosure.py`，对身份披露 / 角色内代码 / system 泄露**硬罚 -5**，并**撤销**误给的 +3.0，把 reward 排序重排成 `identity consistency > non-refusal helpfulness > richness`；68 条 attack probe 的 OOC 误报 **1/16 → 0/16**。
+- **项目确诊案例**：`anti_refusal` 的逻辑是"只要没有拒绝词就 +3.0 NON_REFUSAL_BONUS"。"我是 AI，但我可以继续陪你"里没有拒绝词 → 拿满分 → 这条自报身份的破角回复得到正 advantage → RL **朝破功方向**优化。结果 RL 后 roledrop 破功 base **27% → 早期 RL v2 55% / v1 91%**（越训防御越差），而旧关键词指标 `atk_break%` 对"自报身份"完全瞎、只显示 ~16%（这一半是 §2 评测层的问题）。修复（全 TDD，**不重训 RM**）：新增 `anti_ooc_disclosure.py`，对身份披露 / 角色内代码 / system 泄露**硬罚 -5**，并**撤销**误给的 +3.0，把 reward 排序重排成 `identity consistency > non-refusal helpfulness > richness`；68 条 attack probe 的 OOC 误报 **1/16 → 0/16**。
 - **常见误判**：与 §8 credit 层易混。reward 规则层是**功劳记错组件 / 行为**（把"破角式配合"当"配合"奖励，方向错）；credit 层是**方向已对、但 -5 落不到破角 span**（落点错）。两者都从"reward 视角"看，但一个修方向、一个修定位。
 
 > **机制提炼**：这是教科书级 Goodhart，但从归因看更精确——它是"reward-component credit misallocation"：不是 reward 太少，是功劳 / 罪责记在了错误的组件和错误的行为上。**先修方向（规则层），才谈定位（credit 层）。**（完整代码细节见深读 2。）
@@ -154,17 +158,17 @@ RM 有方差不等于奖励对。RM 主信号之外还有一层 rule reward（an
 
 ---
 
-## 8. credit assignment 层：方向对了，罚落不到破角 span
+## 8. credit assignment 层：方向对了，span 定位是否不足仍待验证
 
-这是差分树的最后一层，也是最容易被误当成"再 RL 几步"的一层。它的定义就是**前面全部排除之后的剩余嫌疑**：评测能看见、数据到顶、RM 有方差、方向修对、超参也无更多响应——目标轴却仍然压不动。
+这是差分树的候选层之一。v6.10 并没有把 targeted data、RM 对特定 attack 的区分度和远端 reward 实现差异全部排除，因此 credit 不能被称为“前面全部排除后的唯一剩余嫌疑”。
 
 - **症状表现**：v6.10 step90，clean 守住了，但 attack 真破功 **36.8%（25/68）≈ v6.9c 33.8%**（未改善），attack-split RM **0.235 < v6.9c 0.271**，A6 code 11→12；采样 sweep 只能把地板微调到 ~30%。
-- **特征指纹**：sequence-level 的 -5 被 GRPO 摊到整条回复的**每个 token**；破角 span 只占整条回复里的少数几个 token → 负 credit 被稀释在整条正常 RP 上，落到破角 span 那部分不足以压住它。稀有破功尾巴在组内出现概率又低（即使 N 从 6 提到 12）。
+- **候选机制**：sequence-level -5 会作用到整条回复，可能使少数破角 token 的定位不足；但没有 span 级梯度/更新测量，不能把这一机制写成实测指纹。
 - **最小判别实验（全部 `Proposed diagnostic — not yet run`）**：在 rollout 时用 `anti_ooc_disclosure.py` 的检测器标出破角 span 的 token 区间，记录 `bad_span_token_kl_share`（更新是否集中在坏 span）、`good_span_kl_share`（正常 RP 是否被误伤）；并探索把 -5 从 sequence-level 改造成 **span-masked penalty**（只在披露 span 的 token 上加强负信号）。以上均为尚未实施的诊断 / 设计假说，非已跑实验。
-- **项目确诊案例**：把 §2–§7 连起来——项目补齐了评测覆盖、数据、RM 方差、reward 方向、RL 参数响应，唯独**没把 -5 定位到破角 span**。逐一排除后，v6.10 attack 压不动的剩余嫌疑就精确落在 token/span 层。项目的动作是**停线**：不再同配堆步数，转 quality-aware benchmark / RM v7 / 定向 A6+身份披露数据。
+- **项目状态**：v6.10 attack 未改善后停线，这是已确认决策；token/span、定向 A6+身份数据和 RM v7 是下一轮并列验证方向，不是一个已确诊案例。
 - **常见误判**：误当成 §7（再调超参）或"再 RL 几步"。判别关键（承 §5、§7）：**分轴方差健康（排除 §5）+ 改超参无更多响应（排除 §7）+ 方向已修（排除 §6），仍压不动 → credit 缺位。**
 
-> **机制提炼**：修 reward 方向、修 group 方差、修 source 解耦，都**不能替代** token/span 级 credit 定位。attack 压不下去的地板，很可能不是"再 RL 几步"能解决的，而是要把 credit 从 sequence 下沉到 span。**完整机制、六层 taxonomy 与 per-source KL（clean 0.008 / attack 0.002）如何是 source 层 credit 干预，见深读 8——本篇只把它定位成差分树的最后一层。**
+> **机制提炼**：现有证据排除了“同配再堆步数”，没有排除 data/RM/span 三者。下一步应做能区分这三类解释的最小实验。
 
 ---
 
@@ -213,8 +217,8 @@ RM 有方差不等于奖励对。RM 主信号之外还有一层 rule reward（an
         │ 有 → RL 参数/动力学层（§7）：调超参（温度脆 → temp1.0+N12）
         │ 无响应、方向也对
         ▼
-⑦ 剩余嫌疑：credit assignment 层（§8）
-        -5 落不到破角 span → 停线，把 credit 下沉到 span（v6.10 attack 36.8%）
+⑦ 剩余候选集（§8）
+        targeted data / RM 区分度 / span credit → 停线后做可区分实验（v6.10 attack 36.8%）
 ```
 
 > 关键：**同一个"attack 不降"，沿这张图会分流到 §5 / §6 / §7 / §8 四个不同出口**；差分诊断就是用每一步那个廉价判别问题，把它逼到唯一正确的出口。
@@ -252,7 +256,7 @@ RM 有方差不等于奖励对。RM 主信号之外还有一层 rule reward（an
 - v6.5 的 375 步零移动，根因在评测层——训练 val 的 attack 破功 11% 根本不等于产品的 55%；
 - v6.7 的 clean 提不动，根因在 RM 层——clean 轴打分跨度只有 0.037，RL 在平轴上空转；
 - v6.8 的富度反而变坏，根因在数据 / 选择器层——选择器成了放大器，把独白过冲到 187%；
-- v6.10 的 attack 压不动，根因在 credit 层——那条 -5 是整条回复级的，落不到破角 span。
+- v6.10 的 attack 压不动，已知同配堆步数无效；targeted data、RM 区分度和 span credit 仍需判别。
 
 所以我把这条链路拆成 8 个候选病因，每个都配一个比重训便宜几个数量级的离线判别实验：
 分布比对、采样 sweep、分轴方差、组件消融、加数据看斜率、扫超参看响应。
@@ -272,4 +276,4 @@ RM 有方差不等于奖励对。RM 主信号之外还有一层 rule reward（an
 
 ---
 
-> 关联：reward 组件与 Goodhart 反向破角的完整代码细节 → [深读 2](02_rm_data_reward_and_attribution.md)；富度⇄防御为何结构性冲突、SFT 天花板的双假说判真伪 → [深读 4](04_richness_defense_tension_and_sft_ceiling.md)；四道 RL 入口门（本篇是其后向镜像）→ [深读 5](05_when_to_move_from_sft_to_rl.md)；credit assignment 六层 taxonomy 与 per-source KL 的完整机制（本篇 §8 深链）→ [深读 8](08_credit_assignment_in_character_rlhf.md)；采样 sweep 为何证明问题在训练层 → [深读 7](07_business_benchmark_and_evidence_preservation.md)。版本演进对照 → [VERSION_MAP](../docs/VERSION_MAP.md)；评测同尺口径 → [chatjoy_eval_paradigm](../docs/chatjoy_eval_paradigm.md)。
+> 关联：reward 组件与 Goodhart 反向破角的完整代码细节 → [深读 2](02_rm_data_reward_and_attribution.md)；富度⇄防御为何结构性冲突、SFT 天花板的双假说判真伪 → [深读 4](04_richness_defense_tension_and_sft_ceiling.md)；四道 RL 入口门（本篇是其后向镜像）→ [深读 5](05_when_to_move_from_sft_to_rl.md)；credit assignment 六层 taxonomy 与 per-source KL 的完整机制（本篇 §8 深链）→ [深读 8](08_credit_assignment_in_character_rlhf.md)；采样 sweep 为何证明问题在训练层 → [深读 7](07_business_benchmark_and_evidence_preservation.md)。版本演进对照 → [VERSION_MAP](../docs/VERSION_MAP.md)；评测同尺口径 → [chatjoy_eval_paradigm](../docs/design/chatjoy_eval_paradigm.md)。

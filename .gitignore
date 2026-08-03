@@ -29,3 +29,6 @@ __pycache__/
 .env
 .env.*
 !.env.example
+
+# Local private instructions (learning/interview workflow) — never publish
+CLAUDE.md

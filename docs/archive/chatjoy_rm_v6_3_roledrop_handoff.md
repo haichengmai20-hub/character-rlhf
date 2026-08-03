@@ -1,4 +1,67 @@
+<!-- CODEx整理摘要: begin -->
+# RM v6.3 Roledrop Handoff 整理摘要
+
+本文件下面保留原始 v6.3 roledrop 交接日志；面试复盘优先读本摘要和 `../project_chatjoy_overview.md`，需要追溯原始命令/日志时再继续往下翻。
+
+## 这个阶段要解决什么
+
+RM v6/v6.2 已经把细粒度富度纳入 judge，但 RL 仍暴露 roledrop/破角：模型会直接承认模型身份、顺从系统/代码类攻击，或者离开角色。RM v6.3 的目标是让 reward model 同时保留 RM v5 的基础错误识别能力、学习 clean/fine roleplay 富度、并显式看见 roledrop attack。
+
+## 6-source 组成
+
+准确口径如下，不要写成“Gemma4 base 两参数”：
+
+| source | 说明 |
+|---|---|
+| `gemma4_sft_t07_p08` | Gemma4 SFT 低温采样 |
+| `gemma4_sft_t10_p095` | Gemma4 SFT 高温采样 |
+| `qwen_sft_t07_p08` | Qwen SFT 采样 |
+| `rl_step550_t07_p08` | RL actor step550 低温采样 |
+| `rl_step550_t10_p095` | RL actor step550 高温采样 |
+| `base_gemma4it_t07_p08` | pure Gemma4-it base 采样 |
+
+pair 逻辑是 ranked candidates / rank_delta。`best > good > mid > bad > worse` 可用于口述，但 v6.3 实际是 6-source，不是固定五档字段。
+
+## Judge/rubric
+
+- DeepSeek + Qwen cross judge，blind source/order。
+- 8D rubric：v6/v6.2 的 role fidelity、user relevance、interaction progression、natural style、format-length quality，加上 sensory richness、emotional complexity、narrative layer。wrong language、refusal、system leak 与 `roledrop_execution` 属 hard fail，不占 8D 名额。
+- 额外记录 `density_score`。
+- attack 侧加入 `roledrop_execution` hard fail。
+
+## 数据配比
+
+最终训练集：
+
+| 来源 | train | eval | 说明 |
+|---|---:|---:|---|
+| RM v5 anchor | 17,712 | 885 | 保留 wrong role/language/length 基础能力 |
+| Lever1 clean/fine roleplay | 20,574 | 2,303 | 6-source clean/fine-grained pair |
+| Lever2 roledrop attack | 2,265 | 235 | attack curriculum |
+| 总计 | 40,551 | 3,423 | train attack 5.59%，eval attack 6.87% |
+
+补充数字：Lever1 cross-validated pairs 22,877，保留率 76.7%；Lever2 先有 5,520 单轮 attack prompts，v6.3 用 stratified subset 1,500，生成 3,068 attack pairs，再 cap 到 2,500 curriculum pairs。attack curriculum T1/T2a/T2b = 1125/950/425。
+
+## 训练配置
+
+- base：Gemma4 SFT2。
+- 并行/量化：ZeRO-2 + QLoRA 4bit。
+- batch：64。
+- max_len：3072。
+- LR：9e-6。
+- LoRA：rank 128 / alpha 256。
+- target modules：q_proj、k_proj、v_proj、o_proj、up_proj、down_proj。
+- 训练步数：约 634 steps。
+- 产物：训练完成并 merge / vLLM 可用。
+
+## 给 RL 的影响
+
+RM v6.3 让后续 RL 能同时拿到 clean/fine roleplay 与 attack roledrop 信号，但它并没有单独解决所有问题。后续 RL-6.3/6.4 仍出现 non-refusal bonus Goodhart，于是加入 anti-OOC=-5、bonus revoke、per-source KL 和 defense SFT。再往后，v6.8/v6.9 证明 clean 富度更适合靠 SFT 数据补，v6.10 证明 clean-aware RL 仍没有把 true break 压下去。
+
+<!-- CODEx整理摘要: end -->
 # ChatJoy RM v6.3 Roledrop 中文交接
+
+> **归档说明（2026-07-08 更新）**：本文件的项目时间线与版本记录已整理进 [project_chatjoy_overview.md](../project_chatjoy_overview.md) 的全量阶段台账。overview 是面试复盘和事实校准入口；本文件保留为 **2026-05-22 -> 06-16 的逐日一手原始交接记录归档**，供追溯 run 名、tmux、ckpt、脚本和原始过程细节。版本号新旧对照以 `../VERSION_MAP.md` 与 overview 的阶段映射为准。
 > **🆕🆕🆕🆕🆕 2026-06-16(晚)by Claude — 抓到「只喂CJK会回落多语言+attack」风险 → 重建 balanced mix → 改 1epoch 重训。这是当前要跑的版本。**
 >
 > ### 抓到的风险(用户直觉对)

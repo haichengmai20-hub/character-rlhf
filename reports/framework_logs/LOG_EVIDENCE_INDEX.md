@@ -16,12 +16,12 @@
 
 | 原始路径 | 大小级别 | 用途 | 入库替代物 |
 |---|---:|---|---|
-| `/tmp/gradio_rl_v610_step90.log` | ~15KB | Gradio/vLLM 服务：`max_model_len=8192`、chunked prefill、KV cache 243,904 tokens、并发估算 | vLLM 摘录 + `docs/rl_v610_step90_service_guide.md` |
+| `/tmp/gradio_rl_v610_step90.log` | ~15KB | Gradio/vLLM 服务：`max_model_len=8192`、chunked prefill、KV cache 243,904 tokens、并发估算 | vLLM 摘录 + `docs/runbooks/rl_v610_step90_service_guide.md` |
 | `/tmp/vllm_rl90_8000.log` / `/tmp/vllm_rl90_8001.log` | ~50KB each | OpenAI API vLLM：`max_model_len=4096`、KV cache 209,568 tokens、prefix cache hit rate | vLLM 摘录 |
 | `/tmp/rl_v6.10.log` | MB 级 | verl GRPO：Ray `/dev/shm`、NCCL shm、rollout 配置、per-source KL、step 耗时 | verl 摘录 + 深读 1/3 |
 | `/tmp/sft_v68_ffn_train.log` | ~190KB | LlamaFactory SFT：数据加载、tokenizer、update steps、loss | LlamaFactory 摘录 |
 | `/tmp/sft_v69_balanced.log` | ~465KB | v69 balanced SFT：autoresume、checkpoint、训练完成 | LlamaFactory 摘录 + DATA.md |
-| `/tmp/sft_v69_long_train.log` / `/tmp/sft_v69_long_train2.log` | MB 级 | cutoff / CE OOM / 4096 vs 6144 选择依据 | `docs/FRAMEWORK_RUNTIME_LESSONS.md` |
+| `/tmp/sft_v69_long_train.log` / `/tmp/sft_v69_long_train2.log` | MB 级 | cutoff / CE OOM / 4096 vs 6144 选择依据 | `docs/research/FRAMEWORK_RUNTIME_LESSONS.md` |
 | `/tmp/gradio_v69c_repair_4gpu.log` | KB 级 | v69c repair serving 对照 | 服务指南与工作区审计 |
 
 ## 为什么不直接上传原始日志

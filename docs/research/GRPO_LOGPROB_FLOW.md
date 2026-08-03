@@ -622,7 +622,7 @@ Credit assignment 进一步问：
 所以本文件应和：
 
 ```text
-docs/CREDIT_ASSIGNMENT_TAXONOMY.md
+docs/research/CREDIT_ASSIGNMENT_TAXONOMY.md
 ```
 
 配合阅读。

@@ -253,7 +253,7 @@ Gate F: RL 是否不会明显伤害其他核心轴？
 
 ## 5. Logprob Flow Index
 
-详细见：`docs/GRPO_LOGPROB_FLOW.md`。
+详细见：`docs/research/GRPO_LOGPROB_FLOW.md`。
 
 核心变量：
 
@@ -275,7 +275,7 @@ ratio = exp(new_logprob - old_logprob)
 
 ## 6. Credit Assignment Index
 
-详细见：`docs/CREDIT_ASSIGNMENT_TAXONOMY.md`。
+详细见：`docs/research/CREDIT_ASSIGNMENT_TAXONOMY.md`。
 
 核心问题：
 

@@ -4,12 +4,14 @@ description: ChatJoy RM v6.3 设计文档：在 v6.2 cross-validated 基础上�
 metadata: 
   node_type: memory
   type: project
-  status: design-approved-pending-spec-review
+  status: historical-design-snapshot
   created: 2026-05-21
   originSessionId: f1d698de-5fac-4322-8516-43346d7dabd5
 ---
 
 # RM v6.3 设计文档 — roledrop 修复 + 细腻度提升
+
+> **历史设计快照**：本文件保留 2026-05-21 起的设计目标、估算和 live checklist，不代表当前项目状态。RM v6.3 已训练并 merge；最终数据/结果以 `../project_chatjoy_overview.md`、`../VERSION_MAP.md` 为准。文中的 33,120 attack candidates 是设计上限，实际使用 1,500 prompt subset；G1-G4 是验收门，不自动等于最终通过。
 
 ## 1. 背景与动机
 
@@ -759,7 +761,7 @@ bash train_grpo_lora_actor_verl.sh
 - **不要 candidate gen 时让 base 不受 cap 约束跑**（必须用 cap=768，否则 RM 学到的 actor 物理上做不到）
 - **不要把 anti_repetition penalty 调过 -0.6**（误伤合理重复，角色 voice 会被破坏）
 
-## 14.5 当前进度对照表（更新于 2026-05-25，详见 [[chatjoy-rm-v6-3-roledrop-handoff]]）
+## 14.5 当时进度对照表（更新于 2026-05-25，详见 [原始 handoff](../archive/chatjoy_rm_v6_3_roledrop_handoff.md)）
 
 | 阶段 | 任务 | 完成状态 | Artifact / 备注 |
 |------|------|---------|----------------|
@@ -831,14 +833,14 @@ bash train_grpo_lora_actor_verl.sh
 
 ## 16. 相关文档
 
-- **[[chatjoy-rm-v6-3-roledrop-handoff]]** — **v6.3 live working handoff（Codex + Claude 共享，含 artifacts 验证命令、当前进度、Next Agent Should Do）**
-- [[chatjoy-rm-v6-finegrained-handoff]] — v6.2 完整训练与数据流水线状态
-- [[chatjoy-business-ux-tech-mapping]] — 8 维业务体验 × 技术手段映射
-- [[project-chatjoy-overview]] — 项目总览
-- [[training-runbooks]] — 训练 runbook
+- [RM v6.3 原始 handoff](../archive/chatjoy_rm_v6_3_roledrop_handoff.md) — 历史 working handoff，含 artifacts 验证命令和当时进度
+- [RM v6 fine-grained handoff](../archive/chatjoy_rm_v6_finegrained_handoff.md) — v6.2 完整训练与数据流水线状态
+- [业务体验到技术手段映射](chatjoy_business_ux_tech_mapping.md) — 当前 8D / hard gate / 目标演化映射
+- [项目总览](../project_chatjoy_overview.md) — 当前事实台账
+- [训练 runbook](../runbooks/training_runbooks.md) — 训练命令与配置
 
 **职责区分**：
 - 本 design doc = **架构基线**（设计决策、原理、参数边界、回退方案）— 不变成 running log
-- [[chatjoy-rm-v6-3-roledrop-handoff]] = **live progress**（每天的进度、验证命令、artifacts 状态、下一 agent 该做什么）
+- [RM v6.3 原始 handoff](../archive/chatjoy_rm_v6_3_roledrop_handoff.md) = **历史过程证据**（当时的每日进度、验证命令和 artifacts 状态）
 
 任何"今天跑了什么 / 哪个文件刚生成"放 handoff；任何"为什么这样设计 / 参数为什么是这个值"放本 design doc。

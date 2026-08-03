@@ -403,14 +403,14 @@ RL 指标解释原则：优先看 online RM、total reward、anti-refusal 误伤
 ### 12.1 static-review 发现 `_has_slept` 方向错了
 
 静态复核 `sleep_replicas()` 路径：
-- init 后 [ray_trainer.py:892](hanjiaqi/verl/verl/trainer/ppo/ray_trainer.py#L892) 调 `sleep_replicas()`；每步 rollout 之后 [ray_trainer.py:1379](hanjiaqi/verl/verl/trainer/ppo/ray_trainer.py#L1379) 也调；
+- init 后 `ray_trainer.py:892` 调 `sleep_replicas()`；每步 rollout 之后 `ray_trainer.py:1379` 也调（行号来自当时远端源码快照，不链接到本归档文件）；
 - `sleep_replicas` 走的是 `RolloutReplica.sleep → vLLMHttpServer.sleep → _sleep_hybrid → engine.collective_rpc("sleep", level=1)`，**不经过** `ServerAdapter.release`；
 - 所以我之前加的 `_has_slept` gate 根本不会被 flip，永远 False，会把必要的 `resume(weights)` 跳掉；
 - **结论**：`_has_slept` 补丁已撤回，`resume/release` 回到原始无状态。
 
 ### 12.2 加上"先 offload FSDP actor 再 resume(weights)" 也没解决
 
-在 [engine_workers.py::update_weights](hanjiaqi/verl/verl/workers/engine_workers.py#L668) 的 `resume(tags=["weights"])` 之前加：
+在 `engine_workers.py::update_weights`（当时快照约 L668）的 `resume(tags=["weights"])` 之前加：
 ```python
 if self.actor.engine.is_param_offload_enabled:
     self.actor.engine.to("cpu", model=True, optimizer=False, grad=False)
@@ -552,7 +552,7 @@ Chat template 在 prompt+response 之外加了 1 个 token（BOS/format header�
 
 **D. `reward.reward_model.rollout.free_cache_engine=False`（关键最后一步）**
 
-[reward_model.py:47-48](hanjiaqi/verl/verl/experimental/reward_loop/reward_model.py#L47-L48):
+[reward_model.py:47-48](#L47-L48):
 ```python
 if self.config.rollout.free_cache_engine:
     self.sleep()  # RM init 完立刻睡了
@@ -1176,7 +1176,7 @@ Codex 第二次复跑（§14.6 line 1009-1015）的现象：
 
 Claude §14 跑前发现的同一 hang（v3 run，log `/tmp/grpo_smoke_20260429_162107.log`）：
 - 现象完全一致：actor vLLM `/v1/models` 通、`/health` 200，但 `/classify` 永不返回；
-- 根因：[reward_model.py:47-48](hanjiaqi/verl/verl/experimental/reward_loop/reward_model.py#L47-L48) 在 RewardModelManager init 末尾若 `rollout.free_cache_engine=True` 立刻 `self.sleep()`，把 RM 物理页 unmap；
+- 根因：[reward_model.py:47-48](#L47-L48) 在 RewardModelManager init 末尾若 `rollout.free_cache_engine=True` 立刻 `self.sleep()`，把 RM 物理页 unmap；
 - async agent reward loop（`enable_resource_pool=True`）的代码路径是 `RewardLoopWorker.compute_score → compute_score_disrm → POST /classify`，**不调用 wake_up**；
 - aiohttp `total=None` 永不超时，请求卡在 sleeping RM 上整个进程死锁。
 

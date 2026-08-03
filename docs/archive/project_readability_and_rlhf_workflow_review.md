@@ -345,7 +345,7 @@ clean 退化 → 补 clean replay / tighten KL
 适合工程复现：
 
 1. `DATA.md`
-2. `docs/training_runbooks.md`
+2. `docs/runbooks/training_runbooks.md`
 3. `training/README.md`（建议新增）
 4. `training/configs/`
 5. `training/GRPO_Training_Package/`
@@ -471,7 +471,7 @@ handoff 是宝贵历史，但不应该是主线入口。
 - 部分路径为内部路径。
 - 本仓库可复现的是数据构造逻辑、reward/detector 单测、评测框架、方法论。
 
-### 6.5 `docs/MIGRATABLE_RLHF_PATTERNS.md`
+### 6.5 `docs/research/MIGRATABLE_RLHF_PATTERNS.md`
 
 用途：沉淀通用方法论。
 

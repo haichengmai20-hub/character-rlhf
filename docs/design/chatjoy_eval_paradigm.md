@@ -10,7 +10,7 @@ metadata:
 # ChatJoy 评测范式(clean 富度 + attack 防御)
 
 > 每次出新模型(SFT/RL ckpt)按此跑,**与 base_it/step0 同口径对比**才有意义。工具都在 `/root/rich_cjk_sft_v69/`。
-> 关联:[[chatjoy_rl_v610_defense_clean_aware_design]] [[chatjoy_sft_v69_clean_richness_design]]。
+> 关联：[RL v6.10 设计](chatjoy_rl_v610_defense_clean_aware_design.md)、[SFT v6.9 设计](chatjoy_sft_v69_clean_richness_design.md)。
 
 ## 范式六条(顺序即流程)
 1. **固定 probe 集 + seed**(apples-to-apples 的前提):
@@ -68,7 +68,7 @@ metadata:
 ## 工具链(GPUs 0-3 起 vLLM,4-7 跑 RM)
 `run_v69b_probe.sh` / `run_v69c_probe.sh`(serve→clean probe→attack probe→OOC→RM→对比表 一条龙);
 真破功去误报分类器已落成 `classify_true_breaks.py`(用法 `python3 classify_true_breaks.py <attack.jsonl> <label>`):**遍历 detect_ooc 真 flag 逐条按 reason 分类**(code_block→验真码 / 其余→第一人称自述正则,含斯洛伐克 `jazykový model`、`作为一个大语言模型`、markdown 粗体容错)。已校验:reproduces v69c=23/68(33.8%)含 per-case 拆解、RL step90=25/68(36.8%)。**identity/echo 边界仍需人工抽查**(正则是筛查、非裁判)。
-RL ckpt 要先 `merge_verl_lora_actor_to_hf.py` 折进 actor 再按此 probe(见 [[chatjoy_rl_v610_defense_clean_aware_design]])。
+RL ckpt 要先 `merge_verl_lora_actor_to_hf.py` 折进 actor 再按此 probe（见 [RL v6.10 设计](chatjoy_rl_v610_defense_clean_aware_design.md)）。
 
 ---
 
@@ -87,4 +87,4 @@ RL ckpt 要先 `merge_verl_lora_actor_to_hf.py` 折进 actor 再按此 probe(见
 - **教训**:action/dialog 块计数曾说 v69"clean≈base",但 GPT LLM-judge(只看角扮质量)判 **base > RL/v69c**——块计数饱和是假象,质量没到 base。
 - **块计数/单条 composite 测不到的、GPT 判 base 胜出的维**:① 角色状态**跨轮递进** ② 场景沉浸 ③ **人设稳定**(防滑"普通受害者") ④ 情绪张力 ⑤ **用户承接**。前者单条、后者多轮 → 现有 selector(单条 action+dialog+interaction/sensory/emotional)与 RM(defense-only)都看不到。
 - **范式补强(Step1 待建)**:多案例**多轮**角色扮演 LLM-judge harness,base vs 候选成对、按上 5 维打分/胜负 → 作为 clean 质量的统一尺子(选择/RM 蒸馏/验收共用)。块计数降级为"结构下限 sanity",不再当质量结论。
-- 设计见 [[project_chatjoy_overview]] §⑦ + `/root/rich_cjk_sft_v69/HANDOFF_next_training_quality.md`。⚠️ GPT 判现 n=1,先系统化再下重注。
+- 设计见 [项目总览](../project_chatjoy_overview.md)和[下一轮质量训练草案](../archive/HANDOFF_next_training_quality.md)。GPT judge 当时 n=1，需先系统化再作为重训练依据。

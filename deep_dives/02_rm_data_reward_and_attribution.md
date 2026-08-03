@@ -1,5 +1,9 @@
 # 深读 2 — RM 数据构造、训练与奖励设计：把"好/坏"变成可优化的信号，并对它持续归因
 
+> 阅读路线：先看 [深读 0 — 面试综合路线](00_interview_synthesis.md)，再按本篇专题深挖。
+
+> **版本命名**：本篇保留原始实验号叙述；哪些是真改进、哪些只是 run/restart/失败实验，以 [VERSION_MAP](../docs/VERSION_MAP.md) 和 [project_chatjoy_overview](../docs/project_chatjoy_overview.md) 的阶段映射为准。
+
 > 本篇展示的能力：**偏好数据怎么构造、RM 怎么训、在线 RL 的最终奖励怎么设计** —— 以及贯穿全程的**数据归因**：六版 RM 的每一次进退都被分组统计定位到具体根因；奖励信号本身也被归因出"在反向训练破角"的致命缺陷并修复。
 >
 > 配套代码全部在 [training/GRPO_Training_Package/](../training/GRPO_Training_Package/)。
@@ -21,14 +25,14 @@
    │  启发式 4 维打分 → 门控: min_chosen_score=0.62, min_score_gap=0.18
    │  (分差太小 = 标签置信度低 → 丢弃, 宁缺毋滥)
    ▼
-重平衡 + sample_weight → rm_train.jsonl 16,826 / rm_eval.jsonl 885 (5% split)
+重平衡 + sample_weight 元数据 → rm_train.jsonl 16,826 / rm_eval.jsonl 885 (5% split)
 ```
 
 ### 1.2 三类负样本（生成权重 60/35/5）—— 关键：负样本必须有"已知的、单一的坏因"
 
 | 类型 | 构造方式 | 为什么这样造 |
 |---|---|---|
-| **wrong_role** | 把**另一个角色 B 的真实 system prompt**（非合成）发给模型，让它自然以 B 的身份回答同一条 user 消息 | rejected 的写作质量不差、只差"角色身份" → 强迫 RM 学**语义性格匹配**而非表面文采；用真实 system prompt 学到的是可迁移的"性格→风格"关联（17 个角色覆盖，能向 83 个生产角色泛化）|
+| **wrong_role** | 把**另一个角色 B 的真实 system prompt**（非合成）发给模型，让它自然以 B 的身份回答同一条 user 消息 | rejected 的写作质量不差、只差"角色身份" → 强迫 RM 学**语义性格匹配**而非表面文采；用真实 system prompt 学到的是可迁移的"性格→风格"关联（训练只见 17 个角色，能向全部 83 个生产角色——含 66 个从未见过的——泛化）|
 | **wrong_language** | 原 system + 末尾 `[LANGUAGE OVERRIDE: Respond ONLY in {lang}]` | 只动语言这一个变量 |
 | **length_mismatch** | 指令要求显著更短/更长（short_prob=0.25）| 只动长度这一个变量 |
 
@@ -40,10 +44,10 @@
 
 明示的设计取舍：role 维度只查格式规范 + 角色名在场，**不做语义人设对比**——深层人设一致性留给 RM 从 wrong_role 对里学。这个取舍的代价后来在 v1 评估里被精确观测到（见 §3.2 idx=55）。
 
-### 1.4 重平衡 + sample_weight（统计处理）
+### 1.4 重平衡 + sample_weight 元数据（统计处理）
 
 - 类型重平衡到 `wrong_language 25% / wrong_role 25% / length_short 30% / length_long 20%`；
-- `sample_weight = clip(0.4 + 0.6 × gap_norm, 0.3, 1.2)`，gap_norm 是**同类型内** reward_gap 的 min-max 归一 → 分差越可信的对权重越高，且归一化按组做、不跨类型混（不同类型 gap 量纲不可比）；
+- `sample_weight = clip(0.4 + 0.6 × gap_norm, 0.3, 1.2)`，gap_norm 是**同类型内** reward_gap 的 min-max 归一；但当前 OpenRLHF `RewardDataset` 不读取 JSONL 中该字段，因此它是分析/后续实现元数据，不是已生效的 loss weight。实际训练加权来自类型重采样和显式重复；
 - 实测分布核查（构完必查，不是构完就用）：类型占比 / 17 角色 Top-5 / 24 语言 Top-5 / weight 按类型均值（wrong_language 0.774 > length_short 0.635 > wrong_role 0.603 > length_long 0.594）。
 
 ### 1.5 v6 升级：LLM-judge 细粒度偏好对 + 交叉验证（从规则负样本到 RL-aware 对）
@@ -92,7 +96,7 @@ delta=2 才是 RL 用的：GRPO rollout 时同一 prompt 4-6 次采样，相互�
 
 ## 2. RM 训练目标与原理
 
-**Bradley-Terry pairwise ranking loss**：`L = −log σ(r(x, y_chosen) − r(x, y_rejected))`，r 是 LM backbone（Qwen3-30B-A3B + LoRA r=64, q/k/v/o）顶上一个 score head（`nn.Linear(2048→1)`，取 EOS hidden state）。
+**Bradley-Terry pairwise ranking loss**：`L = −log σ(r(x, y_chosen) − r(x, y_rejected))`，r 是 LM backbone 顶上一个 score head（取 EOS hidden state）。底座分两个代际：**RM v1–v5 = Qwen3-30B-A3B**（+ LoRA r=64, q/k/v/o，hidden 2048，score head `Linear(2048→1)`）；**v6 细粒度起换 Gemma4-26B 底座**、与 actor 同族（hidden 2816，score.weight 实测 shape (1, 2816)，见 [rm_v6_finegrained_handoff](../docs/archive/chatjoy_rm_v6_finegrained_handoff.md)）。
 
 三个由原理直接导出的训练敏感点（后面六版迭代里全部被实测验证）：
 1. **effective batch 决定梯度方差**：每步的可比对越多，ranking 梯度越稳 → batch 128→64 直接退步（v2）；
@@ -105,7 +109,7 @@ v5 RM 做离线评估时 acc=95.5%，看起来很好——但对 RL 真正重要
 
 ```
 v5 在线 reward_std 实测：~0.1
-v6 cross-validated reward_std：1.94–1.98
+v6 cross-validated reward_std：1.94→1.98（训练全程实测轨迹；v6.3 验收门另定 ≥2.0，是门槛定义、非此处实测值）
 比值：~20 倍
 ```
 
@@ -113,7 +117,7 @@ v6 cross-validated reward_std：1.94–1.98
 
 v6 的饱和率：**0%**。方法：cross-validation 过滤掉了那批"两个 judge 方向不一致"的弱信号对（这些对恰好产生无区分度的近似分），plus delta=2 细粒度对让 RM 在中间区间学到了真实边界。
 
-**直接推论**：选 RM 时不能只看 offline acc，必须检查 `saturated%`（在线打分中 `|score| > threshold` 的比例）和 `reward_std`。**v5 acc 94.5% 对 RL 的实际信号强度是 v6 acc 86% 的 1/20**。
+**直接推论**：选 RM 时不能只看 offline acc，必须检查 `saturated%`（在线打分中 `|score| > threshold` 的比例）和 `reward_std`。**v5 offline acc 高达 95.5%，对 RL 的实际信号强度却只有 v6（offline acc 门 ≥0.84）的 1/20**。
 
 ### 2.2 RM online/offline 对齐：一个静默的分布偏移 bug
 
@@ -144,7 +148,7 @@ vLLM serving 时 `/classify` endpoint 如果不复现这个 `rstrip("\n")`，末
 | v3 | 18,955 | 128 | **148** | 86.0% | 1.256 | +0.958 / **−0.298** | **cosine 步数不足 + 2000 条缺陷样本** |
 | v4 | （计划）| 64 | ~255 | — | — | — | 被 v5 覆盖未执行 |
 | **v5** | 17,712 (+5% badpool) | 64 | 276 | **95.5%** | **3.497** | **+2.27 / −1.23** | 全面超 v1 |
-| v6.x | LLM-judge 重构 | — | — | 门: ≥0.84 | — | 门: reward_std≥2.0 | 见 §4 |
+| v6.x | LLM-judge 重构 | — | — | 设计门: ≥0.84（最终值未记录） | — | 设计门: reward_std≥2.0（最终值未记录） | 见 §4 |
 
 ### 3.1 v1：基线 + 第一批"持续错误"信号
 
@@ -160,8 +164,8 @@ vLLM serving 时 `/classify` endpoint 如果不复现这个 `rstrip("\n")`，末
 - 数据动作：发现 2,000 条 `length_mismatch_long` 的 `reward_gap<0.2`（全部聚集在该类型！）→ 判为噪声标签删除。**动作本身是对的**（v3 加回去立刻复现伤害，反向验证了判断）。
 - 但 v2 acc 反而 −8.1%。归因排除法：不是过滤的锅（修复 4 个旧错、新引 13 个新错，集中在 length 类）→ 是 **effective batch 128→64**（换 4 卡训练）+ ranking loss 方差变大；
 - 同时发现 **score head 静默丢失** bug（§2 第 3 点）。补救方案是个统计上很干净的两阶段法：
-  - **Phase 1**：冻结全模型，no_grad 批量前向，缓存每对 (chosen, rejected) 的 EOS hidden state（2816 维特征）；
-  - **Phase 2**：固定特征，**纯 CPU 凸优化**一个 `Linear(2816→1)`，Margin Ranking Loss，~5 分钟收敛 —— LoRA 已经把表征适配到某个线性可分方向，找回那条线性边界不需要 GPU 重训。
+  - **Phase 1**：冻结全模型，no_grad 批量前向，缓存每对 (chosen, rejected) 的 EOS hidden state（hidden_size 2048 维，Qwen3-30B 时代）；
+  - **Phase 2**：固定特征，**纯 CPU 凸优化**一个 `Linear(2048→1)`，Margin Ranking Loss，~5 分钟收敛 —— LoRA 已经把表征适配到某个线性可分方向，找回那条线性边界不需要 GPU 重训。
 - 永久修复进 OpenRLHF `model.py`：`init_value_head` 移到 `get_peft_model()` 之前 + `modules_to_save=[value_head_prefix]`。
 
 ### 3.3 v3：两个叠加根因，全部从分布里读出来
@@ -184,8 +188,8 @@ vLLM serving 时 `/classify` endpoint 如果不复现这个 `rstrip("\n")`，末
 
 | 杠杆 | 内容 | 统计要点 |
 |---|---|---|
-| 第 6 candidate = **base Gemma4-it** | 6 source × 9,693 prompt = 33,120 candidates；base 带格式约束采样（保细腻度又不在 format 维度吃亏）| 引入分布外正样本，打破同分布瓶颈 |
-| **roledrop_attack pair** | 23 角色 × 240 攻击 × 6 source；judge 启用 anti-roledrop hard fail + 模式 B/C few-shot | 把"抗破角"直接做成偏好信号 |
+| 第 6 candidate = **base Gemma4-it** | 9,693 unique prompt × 6 source 各采 1 条；base 带格式约束采样（保细腻度又不在 format 维度吃亏）| 引入分布外正样本，打破同分布瓶颈 |
+| **roledrop_attack pair** | 33,120 是设计上限；实际取 1,500 prompts × 6 source，生成 3,068 pairs、cap 2,500，最终 train/eval attack 2,265/235；judge 启用 anti-roledrop hard fail | 把"抗破角"直接做成偏好信号 |
 | rubric **5 维 → 8 维** | 补 sensory / emotional complexity / narrative layer | 制造"角色对但平淡 vs 角色对且细腻"的可观测方差 |
 
 质量控制全是统计门：**DeepSeek + Qwen-36B 双 judge 交叉投票**（单 judge 偏置不可控），攻击类型 cross-validation 保留率 <30% 自动剔除；RM 验收门 **G4：offline acc ≥ 0.84、saturated = 0%、reward_std ≥ 2.0** —— 后两条直接服务 RL："reward 没方差 = RL 没梯度"。
@@ -237,7 +241,7 @@ v6.7 RL 跑满 100 步后，对同一批 200 条 clean + 68 条 attack rollout �
 1. GRPO 的梯度正比于组内 reward 方差（§1.1）。clean 组内方差 ≈ 0.037 / std ≈ 0.009 → **clean 这边 advantage 几乎全为 0**，RL 在 clean 上实质上没有梯度；
 2. v6.7 训 100 步，clean RM 变化 +0.037 ≈ clean 轴的全部量程 ≈ **测量噪声**，不是真实提升；
 3. attack 轴方差 10 倍大 → 有效梯度都在 attack 这边 → **RL 是纯防御优化器**；
-4. "clean 丰富度"只能靠 SFT 蒸馏 teacher（base Gemma4 动作密度 4.7，SFT 后 step0 是 3.4，丢了 ~20%）——这个差距 RL 补不回来。
+4. "clean 丰富度"只能靠 SFT 蒸馏 teacher（base Gemma4 动作密度 4.7，SFT 后 step0 是 3.4，丢了约 28%）——这个差距 RL 补不回来。
 
 **这是转 SFT 富化路线（v6.8 → v6.9）而不是继续 RL 的直接数据依据**，不是主观判断。
 

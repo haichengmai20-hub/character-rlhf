@@ -1,5 +1,9 @@
 # 深读 1 — 显存算账与 GPU 通信：在 8×RTX 5090 上训 26B/30B MoE
 
+> 阅读路线：先看 [深读 0 — 面试综合路线](00_interview_synthesis.md)，再按本篇专题深挖。
+
+> **版本命名**：本篇保留原始实验号叙述；哪些是真改进、哪些只是 run/restart/失败实验，以 [VERSION_MAP](../docs/VERSION_MAP.md) 和 [project_chatjoy_overview](../docs/project_chatjoy_overview.md) 的阶段映射为准。
+
 > 本篇展示的能力：**在消费级显卡（无 NVLink、无 P2P、32GB/卡）上，为 30B MoE 的 RM 训练和 26B MoE 的 verl GRPO，把每一 GB 显存和每一条通信路径算清楚** —— ZeRO 1/2/3 的取舍、通信原语的代价、vLLM 显存模型（含 cumem 虚拟地址语义）、以及一系列用"算账"而不是"瞎试"解决的 OOM。
 >
 > 所有数字来自实测（配置/日志见 [docs/](../docs/)），不是教科书估算。
@@ -14,7 +18,7 @@
 | 项 | 实测值 | 含义 |
 |---|---|---|
 | GPU | 8× RTX 5090 | 消费卡，**PCIe 互联，无 NVLink** |
-| 单卡可用显存 | **31.36 GB**（不是 32！nvidia-smi 32607MiB，profile 误差曾坑过一次）| 所有预算按 31.36 算 |
+| 单卡可用显存 | **31.36 GB**（nvidia-smi 标称 32607MiB ≈ 31.84GiB，实际可分配预算更低；曾按"32GB"做账吃过 profile 误差的亏）| 所有预算按 31.36 算 |
 | GPU P2P | **全部 CNS（不支持）** | 卡间数据必须绕 host：GPU→CPU 内存→GPU |
 | NUMA 拓扑 | GPU 0-3 ∈ NUMA0，GPU 4-7 ∈ NUMA1 | 同 NUMA 内走 SHM **~50 GB/s**；跨 NUMA 走 QPI loopback **~5-10 GB/s（慢 10×）** |
 
@@ -75,13 +79,12 @@ Adam 状态 → adam_offload 放 CPU              (GPU 端 0)
 
 ```
 26B bf16 参数 = 52GB 数据
-ZeRO-3 前向 all-gather：每层 block 约 1.2GB，48 个 block 串行展开
-同 NUMA SHM 带宽 ~50GB/s：单次 all-gather 理论 1.2÷50 ≈ 24ms/block
-→ 48 block × 24ms ≈ 1152ms（约 1.15s）只是一次前向的通信
-反向再来一次 all-gather + reduce-scatter：≈ 2.3s/step 仅通信
+ZeRO-3 前向需逐层 all-gather 全部参数：52GB ÷ 同 NUMA SHM ~50GB/s ≈ 1s 量级——只是一次前向的通信
+反向再来一次 all-gather：≈ 2s+/step 仅通信（还未计梯度 reduce-scatter）
+（注：上文"48 block × 1.2GB"是 30B/Qwen3 的分块账；26B/Gemma4 此处按总量口径估算）
 ```
 
-对比 ZeRO-2（参数不切，本地完整持有）：每 step 只有梯度 reduce-scatter 一次，约 52GB ÷ 2 × (8-1)/8 ≈ 22GB / 50GB/s ≈ **440ms**。ZeRO-3 的每 step 通信代价在这台机器上是 ZeRO-2 的 5-6 倍——而 ZeRO-2 + NF4 已经把显存压到 ~20GB（有余量），ZeRO-3 的显存收益根本用不着，这才是"ZeRO-3 在本项目是死路"的真正定量根因（不是"实现难"）。
+对比 ZeRO-2（参数不切，本地完整持有）：每 step 只有梯度 reduce-scatter 一次，约 52GB ÷ 2 × (8-1)/8 ≈ 22GB / 50GB/s ≈ **440ms**。ZeRO-3 的每 step 通信代价在这台机器上是 ZeRO-2 的 ≈5 倍以上——而 ZeRO-2 + NF4 已经把显存压到 ~20GB（有余量），ZeRO-3 的显存收益根本用不着，这才是"ZeRO-3 在本项目是死路"的真正定量根因（不是"实现难"）。
 
 > 结论：**通信档位选择要看"额外收益是否被消耗"，不是看"通信量绝对小"**。ZeRO-3 在有 NVLink（~600GB/s）的机器上才有价值。
 
@@ -112,6 +115,8 @@ RL 阶段一张卡上同时住着 actor 的 FSDP 训练态和 vLLM 推理引擎�
 | log_prob / update | 12.15 | 12.15 | 2-3 | ~27 | 4.8 ✓ |
 
 代价：每 step 多两次 CPU↔GPU 全量拷贝，PCIe 5.0 下 ~2-4s——**用 4 秒延迟买 12GB 余量**，是这台机器上唯一可行解。
+
+> 口径注：本节"余量"按 nvidia-smi 标称 31.84GiB 计（31.84 − 31.75 = 0.09；31.84 − 19.6 ≈ 12.2）；§0 的 31.36GB 是预算规划用的保守基线。§2.2 的两行历史记录各自保留了事发当时算式的基数（0.62 行用 32.6 十进制、0.45 行用 31.36 保守值），结论不受基数选择影响。
 
 ### 2.1.1 `/dev/shm` 大小是 NCCL FSDP 的隐性前提（差点永远找不到的 bug）
 
@@ -258,4 +263,4 @@ Maximum concurrency for 8,192 tokens per request: 79.06x
 3. **区分虚拟与物理**：cumem 的虚拟地址预留是这台机器上最反直觉的一课——显存账要按"谁占着地址空间"算，不是按 nvidia-smi 的瞬时占用算；
 4. **一次只动一个变量**：降显存阶梯按优先级排好，崩了才能归因到具体项。
 
-> 相关代码/脚本：[training/configs/](../training/configs/)、[training/launch_scripts/](../training/launch_scripts/)、[training/GRPO_Training_Package/framework_bridge/](../training/GRPO_Training_Package/framework_bridge/)；完整事故记录：[docs/chatjoy_rl_takeover_error_fix_log.md](../docs/chatjoy_rl_takeover_error_fix_log.md)。
+> 相关代码/脚本：[training/configs/](../training/configs/)、[training/launch_scripts/](../training/launch_scripts/)、[training/GRPO_Training_Package/framework_bridge/](../training/GRPO_Training_Package/framework_bridge/)；完整事故记录：[docs/archive/chatjoy_rl_takeover_error_fix_log.md](../docs/archive/chatjoy_rl_takeover_error_fix_log.md)。

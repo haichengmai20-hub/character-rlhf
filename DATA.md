@@ -56,7 +56,12 @@
 | `..._preapi_gemini.progress.jsonl` | 440 MB | Gemini 重写进度（断点续传） |
 | `..._preapi_gemini_resumed.json` | 440 MB | Gemini 重写完成 |
 | `test_dataset.jsonl` / `test_dataset_chatml.jsonl` | 4.1 MB | 测试集（✅ head5 入库 `data/samples/`） |
-| 偏好对 / RM 训练集 | — | 由 `GRPO_Training_Package/generate_preference_pairs*.py` + `framework_bridge/` 生成（脚本 ✅ 入库） |
+| RM v1 pairdata | train 16,826 / eval 885 | wrong role/language/length 四类；4D pair-build heuristic |
+| RM v5 pairdata | train 17,712 / eval anchor 885 | 完整 v1 base + 约 5% bad-case pool |
+| RM v6.2 | train 42,270 / eval 3,614 | 5-source；cross-validated fine pairs 27,287 |
+| RM v6.3 | train 40,551 / eval 3,423 | v5 anchor 17,712 + clean/fine 20,574 + roledrop attack 2,265（train） |
+
+> `sample_weight` 字段虽由数据脚本写入，但当前 OpenRLHF `RewardDataset` 未消费；训练中的实际加权来自类型重采样和显式重复。
 
 ## §4. 模型权重（T3 — 仅记录，数十 GB/个）
 
@@ -70,6 +75,8 @@
 | **`rl_v6.4_step160_merged`** | 49 GB | 可服务（= v2/base） |
 | **`rl_v6.5_step425_merged`** | 49 GB | 可服务（2026-06-08 merge，供产品 A/B） |
 
+> 模型命名口径：用户口述的 SFT/上线模型为 Qwen3-35B-A3B，仓库训练配置为 Qwen3-30B-A3B；RM v6 judge 产物中的 Qwen 名称属于 judge 用途。三者不要混成同一个模型，精确 SFT 配置以本表 30B-A3B 为准。
+
 > ⚠️ Gemma4 纯文本 merge 后被 vLLM/verl 加载的两个坑：(a) merge 必须 `force_text_only`；(b) 加载须补回 `vision_config` + 启动带 `--limit-mm-per-prompt '{"image":0,"video":0}'`。详见 `docs/project_chatjoy_overview.md`。
 
 ## §5. 评测产物与框架日志（T4 — 原始大文件仅记录）
@@ -78,7 +85,7 @@
 
 **框架运行日志策略**：原始 vLLM / verl / LlamaFactory 训练日志不直接入库，避免 Git 体积膨胀和临时链接/环境变量泄漏；仓库保留：
 
-- [docs/FRAMEWORK_RUNTIME_LESSONS.md](docs/FRAMEWORK_RUNTIME_LESSONS.md) — 从日志提炼的 vLLM / verl / LlamaFactory 运行知识；
+- [docs/research/FRAMEWORK_RUNTIME_LESSONS.md](docs/research/FRAMEWORK_RUNTIME_LESSONS.md) — 从日志提炼的 vLLM / verl / LlamaFactory 运行知识；
 - [reports/framework_logs/LOG_EVIDENCE_INDEX.md](reports/framework_logs/LOG_EVIDENCE_INDEX.md) — 原始日志路径、大小级别、用途索引；
 - [reports/framework_logs/excerpts/](reports/framework_logs/excerpts/) — 可公开的脱敏关键片段。
 
@@ -105,8 +112,8 @@
 - `reports/sft_richness/` — v6.8 三份 probe 报告（heldout / rich_opening / 综合）+ CODEX 任务卡，记录 v6.8 失败归因（独白过冲 187%/对话回退/动作没动 → 弃用，重做 v6.9）
 - `reports/sft_richness/rl90_temp_sweep_report.md` — RL v6.10 step90 的部署参数 sweep：`temperature/top_p/presence/min_p` 均调不动真破功，最终服务参数定为 `t=0.8/top_p=0.95/presence=0.4/min_p=0`
 - `training/sft_richness/probe_analysis/classify_true_breaks.py` + `clean_diversity_v2.py` — step90 sweep 的两个关键复现工具：真破功去误报、修复版开场多样性指标
-- `docs/rl_v610_step90_service_guide.md` — step90 merged 模型服务复现指南（vLLM/Gradio/GPU/公网隧道）
-- `docs/WORKSPACE_ARTIFACT_AUDIT_20260618.md` — 工作区产物补全审计，记录哪些文件全文入库、哪些 sample、哪些仅记录
+- `docs/runbooks/rl_v610_step90_service_guide.md` — step90 merged 模型服务复现指南（vLLM/Gradio/GPU/公网隧道）
+- `docs/runbooks/WORKSPACE_ARTIFACT_AUDIT_20260618.md` — 工作区产物补全审计，记录哪些文件全文入库、哪些 sample、哪些仅记录
 
 **合并模型（T3 — 仅记录，~49–52 GB/个）**
 
@@ -114,9 +121,9 @@
 |---|---|---|
 | `sft_rich_cjk_v67_repair_merged_full` | 49 GB | v6.7 repair 后 actor（CJK 出厂均长 488 字、语言 55/55、破功 5/34） |
 | `sft_rich_cjk_v68_ffn_merged_full` | 52 GB | v6.8 FFN/router LoRA 合并（已弃用，留作 A/B 对照） |
-| `rl_v67_step100_merged` | 49 GB | v6.7 RL step100 合并（防御 +0.092 有效，clean 全平 = RM 无梯度） |
+| `rl_v67_step100_merged` | 49 GB | v6.7 RL step100 合并（clean 全平 = RM 无梯度；防御旧记 "+0.092" 为混合分口径，分轴纠错后 t0.7 仅 +0.013 且 t1.0 更差） |
 | `sft_rich_cjk_v69c_repair_merged_full` | 49 GB | v69c repair 合并模型，作为 v6.10 RL actor 起点 |
-| `rl_v610_step90_merged` | 49 GB | v6.10 step90 合并模型；服务配置见 `docs/rl_v610_step90_service_guide.md` |
+| `rl_v610_step90_merged` | 49 GB | v6.10 step90 合并模型；服务配置见 `docs/runbooks/rl_v610_step90_service_guide.md` |
 
 **评测样本（✅ 入库 `data/samples/`）**
 
@@ -143,4 +150,4 @@
 4. **GRPO**：`framework_bridge/prepare_verl_rl_data.py` → `train_actor_model.py` / `run_complete_rlhf.sh`（reward = RM + anti-OOC + anti-refusal + length-shaping）
 5. **评测**：`analyze_*.py` + pairwise + RM breakdown
 
-详细超参/路径/启动命令见 [docs/training_runbooks.md](docs/training_runbooks.md)。
+详细超参/路径/启动命令见 [docs/runbooks/training_runbooks.md](docs/runbooks/training_runbooks.md)。

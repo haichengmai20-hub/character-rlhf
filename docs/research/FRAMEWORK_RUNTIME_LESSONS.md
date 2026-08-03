@@ -1,6 +1,6 @@
 # 框架运行知识：从 vLLM / verl / LlamaFactory 日志里沉淀出的经验
 
-> 这篇不是框架教程，而是 ChatJoy 训练链路里反复踩坑后留下的**运行时心智模型**。原始日志不直接入库；可复盘的关键片段见 [reports/framework_logs/LOG_EVIDENCE_INDEX.md](../reports/framework_logs/LOG_EVIDENCE_INDEX.md)。
+> 这篇不是框架教程，而是 ChatJoy 训练链路里反复踩坑后留下的**运行时心智模型**。原始日志不直接入库；可复盘的关键片段见 [reports/framework_logs/LOG_EVIDENCE_INDEX.md](../../reports/framework_logs/LOG_EVIDENCE_INDEX.md)。
 
 ---
 
@@ -115,8 +115,8 @@ Gemma4 merge 是单独一条经验：
 
 本仓库采用：
 
-- [reports/framework_logs/LOG_EVIDENCE_INDEX.md](../reports/framework_logs/LOG_EVIDENCE_INDEX.md)：记录原始日志路径、大小、用途、对应结论；
-- [reports/framework_logs/excerpts/](../reports/framework_logs/excerpts/)：保留可公开的小片段；
+- [reports/framework_logs/LOG_EVIDENCE_INDEX.md](../../reports/framework_logs/LOG_EVIDENCE_INDEX.md)：记录原始日志路径、大小、用途、对应结论；
+- [reports/framework_logs/excerpts/](../../reports/framework_logs/excerpts/)：保留可公开的小片段；
 - 深读文档：把片段转成可迁移的框架知识。
 
 这样未来回顾时可以先读结论，需要查证时再去原机器或归档系统找完整日志。

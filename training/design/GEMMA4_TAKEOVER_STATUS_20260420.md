@@ -33,7 +33,7 @@
 
 ### 3.1 `patcher.py`
 
-文件: [src/llamafactory/model/patcher.py](/home/ps/hanjiaqi/LlamaFactory/src/llamafactory/model/patcher.py:52)
+文件: src/llamafactory/model/patcher.py
 
 已经加入 `_patch_bnb_cpu_loading()`:
 
@@ -44,13 +44,13 @@
 
 同时新增 `force_text_only` 针对 Gemma4:
 
-- 在 [patcher.py](/home/ps/hanjiaqi/LlamaFactory/src/llamafactory/model/patcher.py:210) 附近
+- 在 [patcher.py](#) 附近
 - 把 `vision_config` 和 `audio_config` 置空
 - 目标是只保留 text tower，避免多模态部分参与初始化
 
 ### 3.2 `quantization.py`
 
-文件: [src/llamafactory/model/model_utils/quantization.py](/home/ps/hanjiaqi/LlamaFactory/src/llamafactory/model/model_utils/quantization.py:173)
+文件: src/llamafactory/model/model_utils/quantization.py
 
 当前 4-bit BNB 配置的关键改动:
 
@@ -66,7 +66,7 @@
 
 ### 3.3 `loader.py`
 
-文件: [src/llamafactory/model/loader.py](/home/ps/hanjiaqi/LlamaFactory/src/llamafactory/model/loader.py:189)
+文件: src/llamafactory/model/loader.py
 
 当前增加了一段“CPU 参数搬运”后处理:
 
@@ -82,8 +82,8 @@
 
 主日志:
 
-- [latest_gemma4.log](/home/ps/hanjiaqi/LlamaFactory/chatjoy/logs/latest_gemma4.log)
-- 实际指向: [gemma4_z3_qlora_4gpu_20260420_154852.log](/home/ps/hanjiaqi/LlamaFactory/chatjoy/logs/gemma4_z3_qlora_4gpu_20260420_154852.log)
+- [latest_gemma4.log](#)
+- 实际指向: [gemma4_z3_qlora_4gpu_20260420_154852.log](#)
 
 关键证据:
 
@@ -91,7 +91,7 @@
 
 日志位置:
 
-- [latest_gemma4.log:882](/home/ps/hanjiaqi/LlamaFactory/chatjoy/logs/latest_gemma4.log:882)
+- [latest_gemma4.log:882](#)
 
 出现:
 
@@ -106,8 +106,8 @@
 
 日志位置:
 
-- [latest_gemma4.log:870](/home/ps/hanjiaqi/LlamaFactory/chatjoy/logs/latest_gemma4.log:870)
-- [latest_gemma4.log:871](/home/ps/hanjiaqi/LlamaFactory/chatjoy/logs/latest_gemma4.log:871)
+- [latest_gemma4.log:870](#)
+- [latest_gemma4.log:871](#)
 
 核心诊断:
 
@@ -137,8 +137,8 @@
 
 日志位置:
 
-- [latest_gemma4.log:972](/home/ps/hanjiaqi/LlamaFactory/chatjoy/logs/latest_gemma4.log:972)
-- [loader.py:222](/home/ps/hanjiaqi/LlamaFactory/src/llamafactory/model/loader.py:222)
+- [latest_gemma4.log:972](#)
+- [loader.py:222](#)
 
 报错:
 

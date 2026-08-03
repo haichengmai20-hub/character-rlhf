@@ -1,8 +1,12 @@
 # 深读 8 — Character RLHF 中的 Credit Assignment：sequence→token 错配如何决定这个项目的成败
 
-> 本篇展示的能力：**把本项目里几次最贵的成败，重新读成"对同一个 credit assignment 错配（sequence reward → group advantage → token loss）在不同层上的回应"** —— 而不是把 credit assignment 当成一堆 GRPO 名词罗列。核心主张：GRPO 只负责给出**更新方向**；这个项目里真正决定方向打在"破角 span"上还是"整条回复 / 错误 reward 组件 / 错误样本源"上的，是 credit assignment。本项目几次转向（anti-OOC 修复、富度归 SFT / 防御归 RL、GSPO、per-source KL、v6.10 停线）拆开看，全都是在补这个错配的某一层。
+> 阅读路线：先看 [深读 0 — 面试综合路线](00_interview_synthesis.md)，再按本篇专题深挖。
+
+> **版本命名**：本篇保留原始实验号叙述；哪些是真改进、哪些只是 run/restart/失败实验，以 [VERSION_MAP](../docs/VERSION_MAP.md) 和 [project_chatjoy_overview](../docs/project_chatjoy_overview.md) 的阶段映射为准。
+
+> 本篇展示的能力：用 credit assignment 视角重读项目中的 reward 方向、group 方差、source 解耦和 token/span 定位。前三层有实测或代码证据；v6.10 的 token/span 解释仍是 `Proposed diagnostic — not yet run`，必须与 targeted data、RM 区分度并列，不能当成排他确诊。
 >
-> 概念底稿见 [docs/CREDIT_ASSIGNMENT_TAXONOMY.md](../docs/CREDIT_ASSIGNMENT_TAXONOMY.md) 与 [docs/GRPO_LOGPROB_FLOW.md](../docs/GRPO_LOGPROB_FLOW.md)；本篇不重复推导公式，只把这套框架**套回本项目的真实数字与真实决策**。所有引用数字均取自仓库既有记录（[CASE_STUDY](../CASE_STUDY.md) / [RLHF_WORKFLOW](../RLHF_WORKFLOW.md) / [VERSION_MAP](../docs/VERSION_MAP.md) / [v69_reconcile_report](../reports/v69_reconcile_report.md)）；本篇**新提出的诊断指标一律标注 `Proposed diagnostic — not yet run`，未声称已跑实验**。
+> 概念底稿见 [docs/research/CREDIT_ASSIGNMENT_TAXONOMY.md](../docs/research/CREDIT_ASSIGNMENT_TAXONOMY.md) 与 [docs/research/GRPO_LOGPROB_FLOW.md](../docs/research/GRPO_LOGPROB_FLOW.md)；本篇不重复推导公式，只把这套框架**套回本项目的真实数字与真实决策**。所有引用数字均取自仓库既有记录（[CASE_STUDY](../CASE_STUDY.md) / [RLHF_WORKFLOW](../RLHF_WORKFLOW.md) / [VERSION_MAP](../docs/VERSION_MAP.md) / [v69_reconcile_report](../reports/v69_reconcile_report.md)）；本篇**新提出的诊断指标一律标注 `Proposed diagnostic — not yet run`，未声称已跑实验**。
 
 > ## Attribution Lens
 > 本篇解释项目里观察到的行为应归因到：
@@ -42,7 +46,7 @@ GRPO 把这个正 advantage 广播到该回复的每一个 token
 
 ## 1. 错配的解剖：三个层级各说各话
 
-Character RLHF 一次 GRPO 更新的信息流（完整逐步版见 [GRPO_LOGPROB_FLOW.md](../docs/GRPO_LOGPROB_FLOW.md)）：
+Character RLHF 一次 GRPO 更新的信息流（完整逐步版见 [GRPO_LOGPROB_FLOW.md](../docs/research/GRPO_LOGPROB_FLOW.md)）：
 
 ```
 用户输入 x
@@ -75,7 +79,7 @@ Loss 是 token-level 的（能定位，但拿到的信号已经被摊平）
 
 ## 2. 六个层级（scaffolding，不展开）
 
-概念完整版在 [CREDIT_ASSIGNMENT_TAXONOMY.md](../docs/CREDIT_ASSIGNMENT_TAXONOMY.md)。这里只保留一张对照表当坐标系，供 §4 引用：
+概念完整版在 [CREDIT_ASSIGNMENT_TAXONOMY.md](../docs/research/CREDIT_ASSIGNMENT_TAXONOMY.md)。这里只保留一张对照表当坐标系，供 §4 引用：
 
 | 层级 | 核心问题 | 本项目真实例子 | 主要风险 | 诊断方式 |
 |---|---|---|---|---|
@@ -92,7 +96,7 @@ Loss 是 token-level 的（能定位，但拿到的信号已经被摊平）
 
 ## 3. credit 在 GRPO 里怎么传（只保留错配相关的三个公式）
 
-完整变量与执行顺序见 [GRPO_LOGPROB_FLOW.md](../docs/GRPO_LOGPROB_FLOW.md)。这里只取和错配直接相关的三步。
+完整变量与执行顺序见 [GRPO_LOGPROB_FLOW.md](../docs/research/GRPO_LOGPROB_FLOW.md)。这里只取和错配直接相关的三步。
 
 **(1) sequence reward 是组件之和**（本项目实际的奖励链，见 [RLHF_WORKFLOW §4.1](../RLHF_WORKFLOW.md)）：
 
@@ -124,7 +128,7 @@ L = - E_i,t[ min(ρ_i,t · A_i, clip(ρ_i,t, 1-ε, 1+ε) · A_i) ] + β·KL(π_�
 
 其中 `π_old` = rollout 时冻结的 actor 快照，`π_ref` = 冻结的 SFT/init actor（KL 锚，**不是** ratio 分母）。
 
-**错配点就在 (2)→(3)**：`A_i` 是整条回复一个值，`ρ_i,t` 是逐 token 的。一条回复得负分，它的每个 token 都倾向被压制——哪怕坏的只是 68 个 token 里的 4 个。GRPO 给了方向（这条回复该往下压），但它**没有能力**说"只压这 4 个"。这一步在本项目里的直接后果，就是 §4.1 的反向破角和 §4.5 的 attack 压不动。
+**错配点就在 (2)→(3)**：`A_i` 是整条回复一个值，`ρ_i,t` 是逐 token 的。一条回复得负分，它的每个 token 都倾向被压制——哪怕坏的只是整条回复里的少数几个 token。GRPO 给了方向（这条回复该往下压），但它**没有能力**说"只压这 4 个"。这一步在本项目里的直接后果，就是 §4.1 的反向破角和 §4.5 的 attack 压不动。
 
 ---
 
@@ -140,6 +144,8 @@ L = - E_i,t[ min(ρ_i,t · A_i, clip(ρ_i,t, 1-ε, 1+ε) · A_i) ] + β·KL(π_�
   - sequence 层：这条回复 95% 是正常 RP，坏的只是身份披露那一个 span；但 reward 是整条的，正的 sequence reward → 正 advantage → 破角 span 也被强化。
 - **版本对比**：base（无 RL，27%） vs RL v2（55%） vs RL v1（91%）——RL 越训防御越差，斜率与"reward 在奖励破角"一致。
 - **项目做了什么（重排优先级，不重训 RM，全 TDD）**：新增 `anti_ooc_disclosure.py`，对身份披露/角色内代码/system 泄露**硬罚 -5**，并**撤销**误给的 +3.0 bonus（`bonus_revoked`）。使 reward 排序变成：
+
+  以下是 v6.10 设计/远端记录口径；step90 结果有证据，但完整 launcher/reward patch 未入库：
 
   ```
   identity consistency > non-refusal helpfulness > richness
@@ -195,21 +201,21 @@ L = - E_i,t[ min(ρ_i,t · A_i, clip(ρ_i,t, 1-ε, 1+ε) · A_i) ] + β·KL(π_�
   **这就是一次显式的 source 层 credit 分配**：把"能改 attack"的 credit 和"不许动 clean"的约束按样本源分开。比全局 KL 精确得多。
 - **版本对比**：v6.10 step90 结果——clean **守住了**（source 解耦成功），但 attack 真破功 **36.8% ≈ v6.9c 33.8%**（未改善）。即 source 层 credit 分对了，但 attack 内部的 credit 仍没落到点子上 → 交棒 §4.5。
 
-> **机制提炼**：per-source KL 证明这个项目**已经在 source 层做 credit assignment 了**，只是当时没用这个词。它成功地隔离了 clean，却隔离不了 attack 内部"整条 -5 vs 只该罚一个 span"的问题。
+> **机制提炼**：per-source KL 证明项目在 source 层做了不同强度约束；step90 clean held，但完整 v6.10 patch 未入库，因此“成功隔离 clean”的具体实现归因需保守。它也没有证明 attack 内部一定是 span credit 问题。
 
-### 4.5 v6.10 之后 attack 仍压不动：token/span 层 credit 是未解前沿
+### 4.5 v6.10 之后 attack 仍压不动：token/span 是高优先级候选，不是已确诊根因
 
 - **现象**：reward 方向已修（§4.1）、source 已解耦（§4.4）、RM 有 attack 方差（§4.2），但 v6.10 step90 attack 真破功仍 **36.8%（25/68）**，attack-split RM **0.235 < v6.9c 0.271**，A6 code 11→12。采样 sweep 只能把地板微调到 ~30%。
-- **归因（token/span 层 credit 从未被定位）**：把前四节连起来看——项目补齐了 sequence 方向、group 方差、source 解耦，唯独**没有把 -5 的罪责定位到破角 span**。一条 attack 回复被判 -5，GRPO 把这个负 advantage 摊到全部 token；破角 span 只占少数 token，稀有破功尾巴在组内出现概率又低（即使 N 从 6 提到 12）。**负 credit 被稀释在整条正常 RP 上，落到破角 span 上的那部分不足以压住它。** 这是 token/span 层 credit 缺位的直接表现。
-- **版本对比**：v6.9c（SFT 天花板，33.8%） vs v6.10 step90（RL 后 36.8%）——RL 在已修方向、已解耦 source 的前提下**仍未改善 attack**，排除了"方向错""source 混叠"，剩下的嫌疑正是 token/span 层。
-- **项目做了什么**：**停线**——不再同配堆步数，转向 quality-aware benchmark / RM v7 / 定向 A6+身份披露数据（见 [HANDOFF_next_training_quality](../docs/HANDOFF_next_training_quality.md)）。
+- **候选机制**：sequence-level -5 会把负 advantage 施加到整条回复，理论上可能稀释少数破角 token 的定位；稀有破功尾巴的组内覆盖也可能不足。但这只是机制推断，尚无 span mask A/B 或 `bad_span_token_kl_share` 实测。
+- **仍未排除**：v6.9c 33.8% vs v6.10 36.8% 只能证明 attack 未改善；targeted attack coverage、RM 对直球身份/A6 的区分度、远端 reward 实现差异都仍可能解释结果。
+- **项目做了什么**：**停线**——不再同配堆步数，转向 quality-aware benchmark / RM v7 / 定向 A6+身份披露数据（见 [HANDOFF_next_training_quality](../docs/archive/HANDOFF_next_training_quality.md)）。
 - **下一步（`Proposed diagnostic — not yet run`）**：本篇主张下一轮应显式引入 **span 级 credit**：
   - 在 rollout 时用 `anti_ooc_disclosure.py` 的检测器标出破角 span 的 token 区间；
   - 记录 `bad_span_token_kl_share`（更新是否集中在坏 span）、`good_span_kl_share`（正常 RP 是否被误伤）；
   - 探索把 -5 从 sequence-level 改造成 **span-masked penalty**（只在披露 span 的 token 上施加更强的负信号）。
   - 以上均为**尚未实施的诊断/设计假说，非已跑实验**。
 
-> **机制提炼**：这是本项目最诚实的一条结论——**修 reward 方向、修 group 方差、修 source 解耦，都不能替代 token/span 级 credit 定位**。attack 压不下去的地板，很可能不是"再 RL 几步"能解决的，而是要把 credit 从 sequence 下沉到 span。
+> **机制提炼**：现有证据足以否定“同配再堆 RL 步数”，但不足以单独确认 span credit。正确动作是把 span diagnostic 与 targeted data、RM v7 一起做成可区分实验。
 
 ### 4.6 val 11% ≠ 产品 55%：batch/source 层 credit 覆盖为零
 
@@ -302,7 +308,7 @@ Gate D: RL 代价是否可接受？             （深读 5 门 D，canary 门�
 
 **Gate E 的判据**：如果 reward 能判断整条 response 坏，却**无法回答"这次 -5 到底该压哪些 token / span"**，那么 RL 会把大量正常 RP token 一起压制，代价是 clean 表达、角色 voice 或语言一致性受损。
 
-**本项目就是活样本**：v6.10 三门（A/B/C）齐过、方向也修对了，唯独 Gate E 没过——-5 无法定位到破角 span——于是 attack 压不动、还得靠 KL 死守 clean 防止误伤。Gate E 不过时，正确的动作不是堆 RL 步数，而是先把 credit 下沉到 span（§4.5）。
+**本项目给出的证据**：v6.10 attack 未降且 span 定位没有被验证。Gate E 应被视作下一轮实验门，而不是已失败的验收项；需要 span A/B 后才能判断是否真应把 credit 下沉。
 
 ---
 
@@ -345,8 +351,8 @@ Character RLHF 的 reward 基本都是 sequence-level 的，但 GRPO 的 actor �
 - clean 富度 RL 提不动，是因为 RM 在 clean 上跨度只有 0.037，group 层根本没有可分配的 credit，
   所以我们把富度移交 SFT、只让 RL 做有方差的 attack 轴。
 - per-source KL 其实就是我们在 source 层做的 credit 分配：clean 紧锚不许动、attack 松锚给空间。
-- 但即使方向修了、source 也解耦了，v6.10 的 attack 还是压不到 30% 以下，
-  因为我们始终没把那个 -5 定位到破角 span——这是 token/span 层 credit 的缺位，也是我们停线转 RM v7 的原因。
+- 但即使方向修了、source 也做了区分，v6.10 的 attack 仍压不到目标；
+  span credit 是候选解释之一，targeted data 与 RM 区分度同样没有排除，因此停线后要做可区分实验而不是继续堆步数。
 
 所以我把 credit assignment 拆成 token/span/sequence/group/source/batch 六层，
 用 group_reward_std、reward component breakdown、分源 RM、以及提出的 bad_span_kl_share 这些指标，
@@ -364,4 +370,4 @@ GRPO 给出更新方向；credit assignment 决定这个方向是打在破角 sp
 
 ---
 
-> 关联：reward 组件与 Goodhart 反向破角的完整代码细节 → [深读 2](02_rm_data_reward_and_attribution.md)；GSPO/DAPO/per-source KL 的算法原理 → [深读 3](03_rl_dynamics_params_and_strategy.md)；富度⇄防御为何结构性冲突 → [深读 4](04_richness_defense_tension_and_sft_ceiling.md)；四道 RL 入口门（本篇 Gate E 是其扩展）→ [深读 5](05_when_to_move_from_sft_to_rl.md)；三种协调机制 → [深读 6](06_coordinating_conflicting_objectives.md)。概念底稿 → [CREDIT_ASSIGNMENT_TAXONOMY](../docs/CREDIT_ASSIGNMENT_TAXONOMY.md) / [GRPO_LOGPROB_FLOW](../docs/GRPO_LOGPROB_FLOW.md)。
+> 关联：reward 组件与 Goodhart 反向破角的完整代码细节 → [深读 2](02_rm_data_reward_and_attribution.md)；GSPO/DAPO/per-source KL 的算法原理 → [深读 3](03_rl_dynamics_params_and_strategy.md)；富度⇄防御为何结构性冲突 → [深读 4](04_richness_defense_tension_and_sft_ceiling.md)；四道 RL 入口门（本篇 Gate E 是其扩展）→ [深读 5](05_when_to_move_from_sft_to_rl.md)；三种协调机制 → [深读 6](06_coordinating_conflicting_objectives.md)。概念底稿 → [CREDIT_ASSIGNMENT_TAXONOMY](../docs/research/CREDIT_ASSIGNMENT_TAXONOMY.md) / [GRPO_LOGPROB_FLOW](../docs/research/GRPO_LOGPROB_FLOW.md)。

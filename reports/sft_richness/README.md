@@ -29,4 +29,4 @@ The corresponding scripts live under `training/sft_richness/`:
 Large generated JSONL files such as `clean_rl90_t*.jsonl`,
 `attack_rl90_t*.jsonl`, and full SFT mix files are not committed. Representative
 samples live in `data/samples/`; full local paths and sizes are tracked in
-`DATA.md` and `docs/WORKSPACE_ARTIFACT_AUDIT_20260618.md`.
+`DATA.md` and `docs/runbooks/WORKSPACE_ARTIFACT_AUDIT_20260618.md`.

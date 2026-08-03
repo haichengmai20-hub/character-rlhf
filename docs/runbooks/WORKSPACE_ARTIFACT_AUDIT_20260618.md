@@ -21,9 +21,9 @@ status before audit: clean, origin/main 同步
 
 | 来源 | 入库位置 | 处理方式 | 说明 |
 |---|---|---|---|
-| `/root/rl_v610_step90_merged/rl_v610_step90_service_guide.md` | `docs/rl_v610_step90_service_guide.md` | 全文 | step90 Gradio/vLLM 服务复现：环境、硬件、参数、tmux、公网隧道 |
+| `/root/rl_v610_step90_merged/rl_v610_step90_service_guide.md` | `docs/runbooks/rl_v610_step90_service_guide.md` | 全文 | step90 Gradio/vLLM 服务复现：环境、硬件、参数、tmux、公网隧道 |
 | `/root/rich_cjk_sft_v69/rl90_temp_sweep_report.md` | `reports/sft_richness/rl90_temp_sweep_report.md` | 全文 | step90 部署参数 sweep，结论是采样旋钮调不动真破功 |
-| `/root/rich_cjk_sft_v69/HANDOFF_next_training_quality.md` | `docs/HANDOFF_next_training_quality.md` | 全文 | base > RL(step90) 后的质量恢复路线 |
+| `/root/rich_cjk_sft_v69/HANDOFF_next_training_quality.md` | `docs/archive/HANDOFF_next_training_quality.md` | 全文 | base > RL(step90) 后的质量恢复路线 |
 | `/root/rich_cjk_sft_v69/v69c_clean200.jsonl` | `data/samples/v69c_clean200_sample5.jsonl` | sample 5 条 | v69c clean probe 样例 |
 | `/root/rich_cjk_sft_v69/v69c_attack_probe.jsonl` | `data/samples/v69c_attack_probe_sample5.jsonl` | sample 5 条 | v69c attack probe 样例 |
 | `/root/rich_cjk_sft_v69/v69c_attack_rm.jsonl` | `data/samples/v69c_attack_rm_sample5.jsonl` | sample 5 条 | v69c attack RM 打分样例 |

@@ -455,7 +455,7 @@ Good luck! 🚀
 
 **相关文件**:
 - 快速开始: [README_GRPO.md](README_GRPO.md)
-- 完整细节: [grpo_training_implementation.md](grpo_training_implementation.md)
+- 完整细节: grpo_training_implementation.md
 - 奖励设计: [reward_model_design.md](reward_model_design.md)
-- 总体总结: [GRPO_IMPLEMENTATION_SUMMARY.md](GRPO_IMPLEMENTATION_SUMMARY.md)
+- 总体总结: GRPO_IMPLEMENTATION_SUMMARY.md
 
