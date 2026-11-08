@@ -1,0 +1,39 @@
+# LLaMA-Factory DPO —— 算法选型对照实验（β=0.1 档）
+# 与 beta005 仅 pref_beta 与 output_dir 不同；其余字段必须逐项一致（对照前提）。
+# 状态：[预注册，未执行]；占位路径替换与 dry-run 校验说明同 beta005。
+
+model_name_or_path: /path/to/targeted_sft_merged
+trust_remote_code: true
+
+stage: dpo
+do_train: true
+finetuning_type: lora
+lora_target: q_proj,k_proj,v_proj,o_proj
+lora_rank: 64
+lora_alpha: 128
+pref_beta: 0.1
+pref_loss: sigmoid
+
+dataset: character_rlhf_dpo
+dataset_dir: /path/to/algorithm_selection/data
+template: gemma
+cutoff_len: 3072          # 占位：按完整轨迹 token 分布冻结后再定
+max_samples: 100000
+overwrite_cache: true
+preprocessing_num_workers: 8
+
+num_train_epochs: 1
+learning_rate: 1.0e-6
+per_device_train_batch_size: 1
+gradient_accumulation_steps: 8
+lr_scheduler_type: cosine
+warmup_ratio: 0.03
+bf16: true
+quantization_bit: 4
+gradient_checkpointing: true
+
+output_dir: /path/to/saves/algo_sel_dpo_beta01
+logging_steps: 10
+save_steps: 50
+plot_loss: true
+report_to: none

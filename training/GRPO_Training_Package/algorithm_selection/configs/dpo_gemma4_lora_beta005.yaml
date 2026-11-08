@@ -1,0 +1,46 @@
+# LLaMA-Factory DPO —— 算法选型对照实验（β=0.05 档）
+# 状态：[预注册，未执行]。路径均为占位符，运行前替换为本机实际路径，
+# 并以本机安装的 LLaMA-Factory 版本 dry-run 校验字段（pref_beta/pref_loss/ranking
+# 数据字段随版本演进，见 algorithm_selection/README.md「已知边界」）。
+# 对照协议与判定规则：interview_notes/RL/03_算法选型对照实验_DPO_GRPO_GSPO.md
+
+### 模型：与在线 RL 臂同一 Actor 起点（占位）
+model_name_or_path: /path/to/targeted_sft_merged
+trust_remote_code: true
+
+### 任务
+stage: dpo
+do_train: true
+finetuning_type: lora
+lora_target: q_proj,k_proj,v_proj,o_proj
+lora_rank: 64
+lora_alpha: 128
+pref_beta: 0.05
+pref_loss: sigmoid
+
+### 数据：由 convert_pairs_to_llamafactory_dpo.py 生成
+dataset: character_rlhf_dpo
+dataset_dir: /path/to/algorithm_selection/data
+template: gemma
+cutoff_len: 3072          # 占位：按完整轨迹 token 分布冻结后再定（SFT 正文 §0.5）
+max_samples: 100000
+overwrite_cache: true
+preprocessing_num_workers: 8
+
+### 训练：与筛选协议对齐（LR 1e-6 固定，两档 β）
+num_train_epochs: 1
+learning_rate: 1.0e-6
+per_device_train_batch_size: 1
+gradient_accumulation_steps: 8
+lr_scheduler_type: cosine
+warmup_ratio: 0.03
+bf16: true
+quantization_bit: 4
+gradient_checkpointing: true
+
+### 输出
+output_dir: /path/to/saves/algo_sel_dpo_beta005
+logging_steps: 10
+save_steps: 50
+plot_loss: true
+report_to: none
