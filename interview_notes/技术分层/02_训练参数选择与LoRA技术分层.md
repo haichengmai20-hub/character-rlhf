@@ -23,12 +23,27 @@
 | Gemma Defense SFT：存档 YAML 配置 | 16 / 32 / q,k,v,o | LR 5e-5；2 epoch；cutoff 3072；micro=1，GA=8；warmup 0.03 | 新 adapter 挂在 SFT2 merged；不是把同一 adapter 的 rank 原地减半 |
 | RM-A 后期：既有正文的历史配置 | 64 / 128 / q,k,v,o | LR 9e-6；global batch 64；max_len 3072 | Qwen 与 Gemma RM 结果不可混成一个模型 |
 | 历史 RM v6.3：存档 launcher | 128 / 256 / q,k,v,o,up,down | LR 9e-6；batch 64 Pair；micro=1；8 GPU；1 epoch；3072；warmup 0.03 | 训练集 40,551 Pair 的脚本口径，不是当前设计 44,280 |
-| 当前 RM-B.1/B.2：统一设计 | 128 / 256 / q,k,v,o,up,down | LR 9e-6；batch 64 Pair；8 GPU；GA=8；1 epoch；3072 | 两者从同一 SFT merged 独立初始化，用 44,280 Pair 做数据对照 |
+| 当前 RM-B（统一设计） | 128 / 256 / q,k,v,o,up,down（设计起点） | LR 9e-6；batch 64 Pair；8 GPU；GA=8；1 epoch；3072 | 从 Targeted-SFT backbone + 新 head 初始化；30,000 Pair（上一代 44,280 仅作受控替换对照口径） |
 | 当前存档 RL launcher 默认 | 16 / 16 / q,k,v,o | LR 3e-6；prompt batch 32；rollout.n=4；warmup 0.03；prompt/response=2048/768 | 允许环境变量覆盖；与当前面试 N=6 协议不同，不能直接称统一设计实跑值 |
 
 配置来源：[Qwen SFT2](../../character-rlhf/training/configs/qwen30b_fsdp_qlora_clean32_sft2.yaml)、[Gemma SFT2](../../character-rlhf/training/configs/gemma4_sft2_3gpu_ddp_lora_567.yaml)、[Defense SFT](../../character-rlhf/training/configs/gemma4_defense_sft_3gpu_lora.yaml)、[RM v6.3 launcher](../../character-rlhf/training/launch_scripts/launch_rm_train_gemma4_sft_v6.3_fg.sh)、[RL launcher](../../character-rlhf/training/GRPO_Training_Package/framework_bridge/verl/train_grpo_lora_actor_verl.sh)。设计来源：[RM-B 正文 §8](../RM/RMv6-v6.6_从Unified_Clean_Attack到定向Hardening完整面试复习.md)、[全链路总览](../00_ChatJoy后训练全链路统一面试复习.md)。
 
 SFT 主文的 NF4、r32/alpha64、Paged AdamW、8×5090 和 ZeRO-2/FSDP 描述属于一套设计说明；不能把它与 Gemma 的 3GPU DDP YAML 拼成一次执行记录。本文涉及“为何选择”时，优先解释哪种瓶颈会使这套选择合理，并说明如何验证。
+
+### 2.1 训练参数与推理/服务参数的边界（2026-11-08 补）
+
+上表全部是**训练参数**，与两类下游参数必须分开维护（详见 [RL/02_模型交付与上线部署](../RL/02_模型交付与上线部署.md)）：
+
+| 类别 | 例子 | 改动后先做什么 |
+| --- | --- | --- |
+| 改变回答分布的参数/输入 | temperature、top_p、停止标记、max output、摘要、角色卡、截断 | 先回归质量；分布不适应才考虑重训 |
+| 服务资源/调度参数 | GPU、TP、并发批处理、KV 分配、副本 | 先重测性能；必要时抽查行为一致性 |
+
+三条血缘与预算红线：
+
+1. **底座血缘**：adapter 依赖对应底座——RL adapter 挂 Targeted-SFT 合并底座（不是原始 M0）；多段 LoRA、合并顺序按实际血缘处理，不同阶段的 adapter 不能相加。
+2. **量化两分**：QLoRA 的训练量化与服务量化分别决定。训练时 4-bit 加载不代表任意 4-bit 推理格式兼容；导出、合并、再量化后按部署形态回归质量。
+3. **调参预算对称**：跨模型比较给同等搜索预算（候选 × LR × seed）；发现配置不适合某模型时补对称预算或限定结论，不能据此宣布模型家族更差。
 
 ## 3. P1：LoRA 的三个核心参数到底改了什么
 
@@ -213,7 +228,7 @@ $W_{\mathrm{DP}}$ 是数据并行规模，不能在还存在 TP/PP 的系统里�
 
 ### 6.3 epochs 和 steps：相同 epoch 不等于相同优化预算
 
-当前 RM-B 设计 44,280 Pair、global batch 64、1 epoch：
+RM-B 步数算例（当前设计 30,000/64 ≈ 469 step；以下用上一代 44,280 口径演示同一算术）、global batch 64、1 epoch：
 
 $$
 44{,}280/64=691.875
@@ -411,7 +426,7 @@ batch 改变梯度估计与同 epoch 更新次数，epoch 增加暴露与过拟�
 | --- | --- | --- |
 | [SFT 完整正文](../SFT/Character-RLHF_SFT_Canonical_Full.md) §13 | QLoRA、Mask、硬件方案 | 当前设计 |
 | [RM-A 完整正文](../RM/RMv1-v5_从SFT平台到Anchor_RM完整面试复习.md) §4—5 | r64、训练预算、产物保存 | 既有历史配置与复现口径 |
-| [RM-B 完整正文](../RM/RMv6-v6.6_从Unified_Clean_Attack到定向Hardening完整面试复习.md) §8—9 | r128、44,280 Pair、数据-only | 当前统一设计 |
+| [RM-B 完整正文](../RM/RMv6-v6.6_从Unified_Clean_Attack到定向Hardening完整面试复习.md) §8—9 | r128、30,000 Pair（上一代 44,280 受控对照） | 上一代统一设计，主账见附件母版 |
 | [Qwen SFT 配置](../../character-rlhf/training/configs/qwen30b_fsdp_qlora_clean32_sft2.yaml) | method/train | r8、dropout、LR 与长度 |
 | [Gemma SFT 配置](../../character-rlhf/training/configs/gemma4_sft2_3gpu_ddp_lora_567.yaml) | method/train | r32、LR、GA |
 | [Defense SFT 配置](../../character-rlhf/training/configs/gemma4_defense_sft_3gpu_lora.yaml) | model/method/train | r16 与新 adapter 底座 |

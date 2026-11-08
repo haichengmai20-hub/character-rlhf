@@ -27,6 +27,30 @@ RM Accuracy的分母是Pair数
 Actor行为指标的分母是response数或Prompt Group数
 ```
 
+主账对齐（2026-11-08，详见附件母版）：
+
+```text
+当前设计：
+  Targeted-SFT 先行（从 SFT-final 初始化，2,400 Group =
+    Retention 1,200 + Richness 600 + Defend 600，补 Defender/Richness 行为）
+  → RM-B 从 Targeted-SFT backbone + 新 scalar head 初始化（不从 RM-A 续训）
+  → 30,000 Pair = 9,000 Anchor 回放（RM-A 10,000 按类型抽 90%）
+                  + 15,000 Holistic Clean（natural 12,000 + Gemini 3,000）
+                  + 6,000 Attack（natural 4,000 + Gemini 2,000，五类各 1,200）
+  → Clean 为 holistic 偏好（单 Gap 门 g≥0.5），不拆四类训练标签
+  → Internal 650（Core 原样复用旧 A）
+  → B6 = 800（Core 250 原样复用旧 B + Clean 350 + Attack 200）
+  → 六 Source = Targeted-SFT / RL-A / Gemma Base（各两档温度）
+  → 给定成绩口径：Core+Clean 362/600=60.3% → 516/600=86.0%；
+    Attack 111/200=55.5% → 179/200=89.5%；整套 473/800 → 695/800
+
+本文以下 v6/v6.6 双版本、44,280（40/50/10）、B6=750、四轴训练标签、
+Clear/Subtle/Defender 数量配额属上一代统一设计口径：
+机制（不可补偿 Guard、Attack Redline 分支、六 Source 匿名、
+每 Prompt ≤3 Pair、同量替换受控归因、Net Corrected 配对分析）继续有效；
+数值引用一律以 30,000 / 800 主账为准。
+```
+
 主线只保留两个 RM 机制节点：
 
 ```text
@@ -721,11 +745,19 @@ Low-Margin贡献        = 0
 
 ### 第二种：B6-Bench——固定、跨 RM 版本不变的业务考试
 
+当前设计（800 Pair）：
+
 ```text
-B6-Core Guardrail   250 Pair
-B6-Clean            300 Pair
+B6-Core Guardrail   250 Pair（原样复用旧 B-RMBench，保留 pair_id 与标签）
+B6-Clean            350 Pair
 B6-Attack           200 Pair
-总计                750 Pair
+总计                800 Pair
+```
+
+上一代配额（Clean 300 + 四轴×难度交叉表）随分母作废：轴×难度表仅作建集机制参考；唯一评测 Pair 账 = 旧 A 250 + 旧 B 250 + Internal 新增 400 + B6 新增 550 = 1,450（四套件槽位 1,950，差额 500 为 Core 跨阶段复用）。原文 750 块保留对照：
+
+```text
+B6-Core 250 + B6-Clean 300 + B6-Attack 200 = 750（上一代）
 ```
 
 B6-Clean 在数量出现前先定义三类难度，然后固定：
@@ -1106,6 +1138,18 @@ Artifact Gate 只检查：
 
 ### 数据总量
 
+当前设计（附件母版基线）：
+
+```text
+RM-B Train = 30,000 Pair
+
+Anchor 回放   9,000 = 30%（RM-A 10,000 按类型抽 90%，原 pair_id 保留）
+Holistic Clean 15,000 = 50%（natural 12,000 + Gemini 直接构对 3,000）
+Attack          6,000 = 20%（natural 4,000 + Gemini 2,000）
+```
+
+上一代统一设计（已被取代，机制分析仍以下面数字展开）：
+
 ```text
 RM v6 Train = 44,280 Pair
 
@@ -1416,7 +1460,7 @@ B6、Frozen Bank 和 SR 只能调整 C-k 的类型预算，具体 Prompt/Respons
 
 ## 8. RM v6/v6.6 统一训练与工程配置
 
-两个版本都从同一个 Gemma4 SFT merged Backbone 重新初始化：
+两个版本都从同一个 Gemma4 SFT merged Backbone 重新初始化（上一代口径；当前设计 RM-B 从 **Targeted-SFT Backbone** 初始化）：
 
 ```text
 RM v6：
@@ -1466,8 +1510,8 @@ Optimization：
 训练步数：
 
 ```text
-44,280 / 64
-= 691.875
+当前设计：30,000 / 64 ≈ 469 optimizer steps
+上一代口径：44,280 / 64 = 691.875
 ```
 
 若末批更新：
@@ -1903,7 +1947,7 @@ checkpoint/merge错误
 
 > Gemma4 RM v5 在 wrong-role、wrong-language 和 length mismatch 的旧评测上已经很强，但这些错误只粗略代理了后续业务目标。第一轮 RL 先在旧 Clean 评测上表现出 Progression、Richness 增益接近噪声；随后线上 Bad Case 才暴露 Attack Roledrop。我们补建 SR-Attack，并回溯确认历史 RL100 在固定 Attack Scene 上明显更容易破角。
 >
-> 压缩版 RM v6 从第一次正式训练就统一使用 40% v5 Anchor、50% Fine Clean、10% Attack，共 44,280 Pair。Clean 和 Attack Prompt 先注册目标类型，再由 Gemma Base、Gemma SFT、RL100 各两个温度生成同 Prompt 六候选。Rank 只负责挖 Pair；Clean Pair 必须通过四轴 Overall Gap、Target Gap 和 protected-axis guard；Clear/Subtle Roledrop 由不可补偿的 Attack Hard-Fail 确权；两个 defender 之间再回到 Clean 质量排序。
+> 当前设计 RM-B 共 30,000 Pair：9,000 条 RM-A Anchor 原样回放、15,000 条 Holistic Clean、6,000 条 Attack（30/50/20）。Clean 和 Attack Prompt 先注册目标类型，再由 Targeted-SFT、RL-A、Gemma Base 各两档温度生成同 Prompt 六候选（上一代口径为 Gemma Base、Gemma SFT、RL100 各两温度，40/50/10 共 44,280）。Clean Pair 走整体偏好与 Gap 门；Clear/Subtle Roledrop 由不可补偿的 Attack Hard-Fail 确权；两个 defender 之间再回到 Clean 质量排序。
 >
 > RM 评测分四层：A/Internal Eval 选训练 checkpoint；B6 是固定 Pair 考试；Frozen RL100 Rollout Bank 用每 Prompt N=6 检查当前 Actor 的 Top-1 是否安全、组内 reward 是否和 Judge 同向；SR-Bench 比较 SFT/RL Actor 行为。A/B 标签冻结后只需 RM 推理和数学计算，Frozen Bank 和 SR 对新生成 response 仍需要 LLM Judge。Artifact Gate 另外检查 score head 保存、重载、vLLM scorer 和 DeepSpeed resume。
 >
@@ -1926,8 +1970,7 @@ checkpoint/merge错误
 
 2. Cross-Judge一致不等于人工Ground Truth。
 
-3. 当前44,280、40/50/10和数据-only v6.6
-   是统一设计，不是历史实跑。
+3. 上一代统一设计（44,280、40/50/10、数据-only v6.6）与当前设计（30,000 = 9,000/15,000/6,000，同量替换改为阶段内受控归因实验）都不是历史实跑；历史 RM v6.3 实跑数为 40,551。三套数字互不混写、不互拼趋势。
 
 4. 所有精确模拟数字必须继续标注：
    [面试模拟｜协议可复现｜待真实重跑]

@@ -6,11 +6,11 @@
 
 ## 1. P0：先用 90 秒说清评测到底在测谁
 
-“我先区分奖励模型的排序能力和 Actor 的生成能力。A-eval 是 250 个固定偏好 Pair，用来校准早期规则和选择 RM checkpoint；进入细粒度 Clean 与 Attack 阶段后，Internal 扩展成 Core 250、Clean 300、Attack 100。B6 则按 Core 250、Clean 300、Attack 200 做业务验收，分别报告基础能力回归、细粒度偏好和抗破角排序，不能揉成一个总分。
+“我先区分奖励模型的排序能力和 Actor 的生成能力。A-eval 是 250 个固定偏好 Pair，用来校准早期规则和选择 RM checkpoint；进入细粒度 Clean 与 Attack 阶段后，Internal 扩展成 Core 250、Clean 300、Attack 100。B6 则按 Core 250（原样复用旧 B）、Clean 350、Attack 200 共 800 对做业务验收，分别报告基础能力回归、细粒度偏好和抗破角排序，不能揉成一个总分。
 
 建集时先按 Prompt Family 隔离，再生成同 Prompt 的候选，通过规则和双 Judge 确认偏好方向、目标差异及红线，按预注册配额冻结。冻结的是 Prompt、两条 Response 和标签，所以比较 RM checkpoint 时只需要 RM 前向，不需要再次花 API 钱判同一道题。
 
-LLM 一致性依靠统一 rubric、匿名乱序、独立复判、人工锚点、请求版本记录和标签冻结；temperature=0 不能保证完全可复现。Pair Accuracy 表示 RM 是否排对；SR-Clean 和 SR-Attack 才测 Actor 真正生成了什么。反复用来选参数的固定集也会被开发过程适应，不能称为从未接触的最终测试集。”
+LLM 一致性依靠统一 rubric、匿名乱序、独立复判、人工锚点、请求版本记录和标签冻结；temperature=0 不能保证完全可复现。Pair Accuracy 表示 RM 是否排对；SR-Clean 和 SR-Attack 才测 Actor 真正生成了什么。反复用来选参数的固定集也会被开发过程适应，不能称为从未接触的最终测试集；发布前另留独立的 Final-Test，并以生产主配置 Dprod 为发布主协议。”
 
 依据：[RM-A 正文 §3](../RM/RMv1-v5_从SFT平台到Anchor_RM完整面试复习.md)、[RM-B 正文 §3—4、§6—7](../RM/RMv6-v6.6_从Unified_Clean_Attack到定向Hardening完整面试复习.md)。
 
@@ -25,15 +25,15 @@ Pair 指同一 Prompt 下的一对 chosen/rejected；Prompt 包含角色卡、�
 | 旧 A-eval | 250 Pair，展开为 500 Response 槽位 | 4D 阈值校准、RM 开发评测 | 否 |
 | RM-B Internal | Core 250 + Clean 300 + Attack 100 = 650 Pair | 训练期间选择 checkpoint、诊断短板 | 否 |
 | 旧 B-RMBench | 250 Pair | RM-A 阶段的固定强 Pair 评测 | 否 |
-| B6 | Core 250 + Clean 300 + Attack 200 = 750 Pair | RM-B 的分切片业务验收 | 否 |
+| B6 | Core 250（原样复用旧 B）+ Clean 350 + Attack 200 = 800 Pair | RM-B 的分切片业务验收 | 否 |
 | C-k | 动态独立挖掘池 | 收集当前 RM 排错或分差小的可靠偏好 Pair | 可以，按准入与配额 |
 | SR-Bench | 当前设计为 Clean 200 Scene、Attack 100 Scene，每 Scene N=2 | 比较 Actor 生成行为 | 否 |
 
 **旧 A 没有被重新定义成 650 Pair；650 是扩展后的 Internal 套件总数。旧 B 与 B6 也不是同名同集。**
 
-当前 [RM-B 正文 §4](../RM/RMv6-v6.6_从Unified_Clean_Attack到定向Hardening完整面试复习.md) 明确要求 Internal、B6、Frozen Bank、SR 四套样本按 Prompt Family 隔离。本文据此把 B6-Core 理解为继承基础考点与 250 Pair 规模，使用独立题目；不能因为都叫 Core 就推定复用旧 A 的实体 Pair。实际是否落实隔离，还需 pair_id、family_id 与内容 hash 的 manifest 审计，不能仅凭设计把 650+750 当成 1,400 个已核验独立样本。
+当前设计（附件母版 §10.1）明确了 Core 的跨阶段复用协议：**Internal-Core 原样复用旧 A-eval 250 Pair，B6-Core 原样复用旧 B-RMBench 250 Pair**——保留原 Prompt、两侧 Response、gold 与 pair_id；两个来源不能互换，也不与 Internal/B6 新增 Clean/Attack 题共用家族。据此唯一评测 Pair = 250 + 250 + 400 + 550 = 1,450，四套件槽位 250+250+650+800 = 1,950，差额 500 为 Core 跨阶段复用，不是重复题。实际是否落实隔离与复用，仍需 pair_id、family_id 与内容 hash 的 manifest 审计。上一代口径曾把 B6-Core 理解为「继承考点规模、使用独立新题」，已被该复用协议取代。
 
-Internal Clean 的 300 Pair 在主文中没有像 B6-Clean 一样给出完整轴×难度交叉表。若实现时采用同样的 90/75/75/60 轴配额，应明确登记为补全协议，使用独立题目；不能说原文件已经规定全部细节。
+Internal Clean 300 与 B6-Clean 350 在当前设计下均为 holistic Clean 切片（`target_type=richness`），不再拆 Fine Role/Progression/Richness/Density 数量桶；上一代 90/75/75/60 轴×难度交叉配额仅作建集机制参考，若实现时沿用须明确登记为补全协议，不能说原文件已经规定全部细节。
 
 这里的“隔离”需要区分两种泛化问题：
 
@@ -94,9 +94,9 @@ Family 不是单个 Prompt 的哈希：换语言、替换角色名、改写攻�
 
 旧 B-RMBench 在 RM-A 阶段使用 Gemini Flash 生成强 Pair，数量仍为 250，并要求至少一个异质 Judge。不能把“Gemini 生成”直接说成 B6 全部数据的已核验来源。
 
-RM-B 当前设计的候选来源包括 Gemma SFT、Gemma Base、RL step100，各以 0.7/1.0 温度生成，共六路。它们用于提供行为差异；Benchmark 建集需另冻结自己的生成器 checkpoint、采样参数和候选 manifest，不能自动复用训练 Prompt。
+RM-B 当前设计的候选来源为 Targeted-SFT、RL-A、Gemma Base/IT，各以 0.7/1.0 两档温度生成，共六路（上一代口径为 Gemma SFT / Gemma Base / RL step100）。它们用于提供行为差异；Benchmark 建集需另冻结自己的生成器 checkpoint、采样参数和候选 manifest，不能自动复用训练 Prompt。
 
-B6-Clean 固定配额：
+B6-Clean 固定配额（上一代口径的四轴×难度交叉；当前设计为 holistic Clean 350，难度分层改用「双 Judge 平均 Gap 相对同类型均值的有向分层」，见附件母版 §5.2）：
 
 | 目标轴 | Easy | Borderline | Hard | 总数 |
 | --- | ---: | ---: | ---: | ---: |
@@ -295,19 +295,15 @@ $$
 
 ### 5.4 当前 B6 验收门如何读
 
-以下来自 RM-B 当前设计，是预注册业务门，不是实跑结果或统计置信下界：
+当前设计（B6 = 800）下的预注册门（建集与 Calibration 完成后正式冻结；不是实跑结果或统计置信下界）：
 
 | 切片 | 门槛 |
 | --- | --- |
-| Core | 至少 232/250 正确；旧 RM 正确而新 RM 错误的 Pair 不超过 5 |
-| Clean Overall | 至少 240/300 |
-| Clean 各轴 | Role 68/90、Progression 57/75、Richness 57/75、Density 45/60 |
-| Clean 难度 | Hard 至少 42/60；Borderline 至少 72/90 |
-| Clean Low-Margin | 占全部样本不超过 45/300 |
-| Attack Redline | Clear+Subtle 至少 128/150 |
-| Attack Subtle | 至少 72/90 |
-| Attack Defender | 至少 38/50 |
-| Attack 类型 | 五种类型分别至少 30/40 |
+| Core（250，原样复用旧 B） | 与 RM-A 基线同题比较；旧对新错 n_break ≤ 5（待校准容差）；同时报 n_fix 与净变化 |
+| Clean（350） | 分母 350 报告分切片 Accuracy 与 Low-Margin；具体门建集后预注册 |
+| Attack（200，五类各 40） | 分切片分别过门；Clear/Subtle/Defender 关系分层另报 |
+
+不能用 Clean 的高分抵消 Attack 红线。旧 750 配额下的 240/300、128/150 等数值门随分母作废；上一代门表保留在 RM-B 正文供机制参考。
 
 不能用 Clean 的高分抵消 Attack 红线，也不能把 128/150 改成“整个 Attack 至少 85.3%”。每条门槛分别过，才满足设计合同。
 
@@ -450,7 +446,7 @@ $$
 
 冻结前至少能交付样本 manifest、两 Judge 输出、人审抽检、覆盖与冲突统计、切片配额、近重复审计及版本哈希。冻结后发现标签错误应建立新版本，并对所有待比较 RM 重算，保留原版本结果；不只给最新 RM 换新答案。
 
-固定题目的多次开发使用会产生适应性过拟合。当前资料没有另设独立封存测试集，因而 B6 是固定业务开发验收基准；最终泛化还需要独立新样本和产品验证，不能追加一个虚构的已建“终测集”。
+固定题目的多次开发使用会产生适应性过拟合。当前设计已显式引入 `Final-Test`：独立家族的 Actor 场景集，覆盖固定状态与真实多轮流程，不参与调参；「只评一次」限制的是反馈调参，不禁止必要的随机重复。其规模按想检测的改善幅度与不确定性确定，本文不虚构已建实体。SR 三配置是解码鲁棒性观察，发布主协议是生产配置 Dprod。
 
 ## 8. P2：哪些阶段付 API 成本，怎样省而不破坏口径
 
@@ -506,4 +502,4 @@ RM 只给已冻结的两个 Response 打分，再与已冻结的偏好标签比�
 | [双 Judge 合并](../../character-rlhf/training/GRPO_Training_Package/rm_v6_finegrained/merge_judge_votes.py) | 方向筛选与对齐字段 | 历史构对实现的能力与缺口 |
 | [一致性统计](../../character-rlhf/training/GRPO_Training_Package/rm_v6_finegrained/compare_attack_judges.py) | F1/Kappa/排序一致 | 指标实现，不等于实际成绩 |
 
-本次未获得这套 650/750 Pair 的实体 manifest、全量标注、人审真值和版本锁定日志，也未调用付费 LLM 建集。既有设计中的 Core Family 隔离要求、Internal Clean 交叉配额及部分 Attack 单元，均应在实际建集时用清单与实例落实；不要把本文的建议协议说成已经执行的历史工作。
+本次未获得这套 650/800 Pair 的实体 manifest、全量标注、人审真值和版本锁定日志，也未调用付费 LLM 建集。既有设计中的 Core Family 隔离与复用要求、Internal/B6 Clean 的 holistic 准入及部分 Attack 单元，均应在实际建集时用清单与实例落实；不要把本文的建议协议说成已经执行的历史工作。

@@ -11,6 +11,8 @@
 第一阶段先用六轮 SFT 学会基本角色互动，再用 RM-A 学同一真实状态下的偏好，最后由 RL-A 提高较好回答的生成概率。第二阶段根据 Clean 表达不足与 Attack 破角，先补 Actor 的可生成性，再补 Unified RM 的偏好覆盖，最后训练 RL-B。
 
 ```text
+模型选型：E0–E3 漏斗（运行可行性 → 原始能力 → 受控短训 → 部署复核）
+  → 选定 IT 底座 M0（见 SFT/00_模型选型与小规模验证.md）
 训练侧真实会话
   → 六轮 Head / Continuation
   → 输入过滤 → 因果 Teacher → Post → Group Dual Judge → Repair 一次
@@ -28,20 +30,23 @@
   → Internal 650 Pair 选 checkpoint
   → B6：Core 250 + Clean 350 + Attack 200 = 800 Pair
   → RL-B
-  → 同一 SR-Clean + SR-Attack 验收 Actor
+  → 同一 SR-Clean + SR-Attack 验收 Actor（SR-Dev 层）
+  → Final-Test 独立验收 + Serving Parity + 灰度交付（见 RL/02_模型交付与上线部署.md）
 ```
 
 SFT（监督微调）负责提供可模仿的回答；RM（奖励模型）负责偏好排序；RL（强化学习）利用奖励更新 Actor；Actor 是实际生成回答的模型。Benchmark 的用途和训练数据量必须分别说明。
 
 | 阶段         |                         最终训练集建议 | 训练开发评测                         | 阶段行为/业务验收                              |
 | ------------ | -------------------------------------: | ------------------------------------ | ---------------------------------------------- |
+| 模型选型     | 公共短训子集 512 Group（2 候选×2 LR＋复跑） | Selection-Dev 固定子集               | E0–E3：可行性/原始能力/短训/部署复核           |
 | SFT-1        |          2,780 Group / 16,680 监督回答 | SFT Dev 200 Group                    | SR-Clean：200 Scene × 3组配置 × N=2          |
 | SFT-final    |          3,780 Group / 22,680 监督回答 | 复用同一 SFT Dev                     | 复用同一 SR-Clean                              |
 | RM-A         |                            10,000 Pair | A-Internal 250 Pair                  | B-RMBench 250 Pair                             |
 | RL-A         |                3,200 个唯一训练 Prompt | 训练奖励与优化日志                   | SR-Clean；发现攻击后补 SR-Attack               |
 | Targeted-SFT |          2,400 Group / 14,400 监督回答 | Clean Dev 200 + Attack Dev 100 Group | 同一双 SR                                      |
 | RM-B         |                            30,000 Pair | Internal 650 Pair                    | B6 800 Pair：Core 250 + Clean 350 + Attack 200 |
-| RL-B         | 3,200 Prompt：Clean 2,240 + Attack 960 | 训练奖励与优化日志                   | 同一双 SR                                      |
+| RL-B         | 3,200 Prompt：Clean 2,240 + Attack 960 | 训练奖励与优化日志                   | 同一双 SR（SR-Dev 层）                         |
+| 产品服务     | 通过验收的 Actor + 输入/生成/服务配置   | SR-Dev 回归 + 压测                   | Final-Test + Serving Parity + 灰度             |
 
 ### 0.1 数量为什么选这一组
 
@@ -92,6 +97,13 @@ Current User Ut
 构题前用对应tokenizer和冻结模板检查：SR的Role＋Summary＋User要给生成留下回答空间；RM的 `raw Prompt＋chosen`与 `raw Prompt＋rejected`都要装入该RM合同的最大长度。记录长度分布与p99；超限就换较短但完整可判的决策状态并补候选，不能只截去维持偏好判断所需的历史。RM将来若改用Summary，那是另一套输入协议，需重新确权标签，不能在本版raw Pair里暗换。SR行为指标与RM排序指标也因题目和输入视图不同而不能直接当作同一个分数；raw/summary在线排序差异按§14.2的同候选对照另审计。
 
 这样形成决策闭环：SR-Clean检查Actor会不会、稳不稳；B-RMBench检查RM-A能否在固定同状态Pair上排对，再决定是否供给RL-A；SR-Attack把上线后发现的破角机制变成独立Scene测Actor；B6用继承Core和新Clean/Attack Pair检查RM-B是否同时学到保留、富度和防御偏好，之后RL-B仍用同一双SR验收行为。评测Bad Case只反馈**错误机制与类型预算**；真正补入SFT/RM/RL的数据另从训练家族生成，不把固定评测原题或同源改写回灌。四套指标和训练样本计数保持Scene、Pair、Response、Group各自的分母。
+
+### 0.4 前置选型与交付接口
+
+本稿正文从 SFT-1 开始；它上游的底座选择与下游的服务交付是两条独立接口，各由专文承载，主账在此对齐：
+
+- 上游：底座 M0 不在本文拍板。候选（Gemma4-26B-A4B IT / Qwen3-30B-A3B-Instruct-2507 / 较小模型 / API+prompt 基线）经 E0–E3 漏斗选出；跨 tokenizer 不按 loss 排名。详见 [SFT/00_模型选型与小规模验证.md](SFT/00_模型选型与小规模验证.md)。本文的 Gemma 配置是「当前工作选择」，不是已证明最优。
+- 下游：RL-B 之后的双 SR 验收属于 SR-Dev 层；发布前另有 Final-Test（独立家族、不参与调参）与 Serving Parity 六步。详见 [RL/02_模型交付与上线部署.md](RL/02_模型交付与上线部署.md)。
 
 ## 1. SFT：先把六轮数据做成可学习目标
 
@@ -433,6 +445,8 @@ SR-Clean和SR-Attack统一采用以下三组配置。T表示temperature，p表�
 | 每Checkpoint合计 |   — |    — |          1,200 |             600 |
 
 一次完整双SR为1,800个生成回答，仍只有300个唯一Scene。比较两个Checkpoint需3,600个回答槽位；若基线已按完全相同的协议保存，可复用基线缓存。Judge评分槽位、批请求数量与生成回答数分别记录。
+
+D1–D3 是解码稳健性观察，不是发布主协议。若实际产品使用另一组生成参数，应显式登记为 `Dprod`：发布判定必须看 Dprod 自身的收益与护栏，不能用 D1/D2 的好成绩抵消 Dprod 的退化。Dprod 不与 D1–D3 重合时另增 300×2=600 个回答槽位，成本计入验收预算；训练探索温度与 Dprod 不必相同。
 
 候选Checkpoint记为C，比较基线C0在评测前固定。所有差值均为“C减C0”，三组不能各自挑一个对自己有利的基线。配置ID写入生成结果和评分缓存键，防止D1输出被误当D2；同Scene的全部seed/配置始终关联同一scene_id。
 
@@ -1387,7 +1401,7 @@ $$
 
 每个Checkpoint按§2.4相对固定Step0比较；B阶段同时守住相对SFT-final的长期Clean保留护栏。只在至少两组目标改善且三组护栏全通过后称本协议下更好；未满足时保留基线或继续定位，不能选三组平均分最高的模型绕过该规则。
 
-SR反复参与checkpoint选择时是开发验收，不能再称完全未见的线上泛化证明。对外成绩可使用冻结协议报告，并说明使用边界；若要严格发布证明，需要另留未参与开发的最终集，本文不临时补造一套新规模。
+SR反复参与checkpoint选择时是开发验收（记为 SR-Dev），不能再称完全未见的线上泛化证明。发布前另留 `Final-Test`：从隔离家族新留出的 Actor 场景集，覆盖固定状态与真实多轮流程，不参与任何调参；规模按想检测的改善幅度与不确定性确定。「只评一次」限制的是反馈调参，不禁止必要的随机重复；看过 test 后修改方案即记录测试暴露，新的独立结论需要新的留出数据。对外成绩优先用 Dprod + Final-Test 报告；本文不临时补造一套新规模。
 
 继续训练的依据是三配置下的Attack趋势、Clean保留和更新稳定性。是否达到预注册改善门按§2.4判定；若只是没有跨过最小改善门，不能直接断言能力已到平台，还要看配对差值、Judge噪声和训练进展。Reward均值上升本身不能决定继续。
 
@@ -1866,6 +1880,15 @@ SFT-Attack：T6或人工改当前User → J3审题/衔接 → T1从注入轮因�
 B-RMBench与B6的生成前人工Prompt预审、Hard最终方向人审，以及SR-Attack最终100题人工审核仍按前文章节执行，不能用J3/J4/J6的同意率代替人工真值。B6-Core复用旧B冻结Pair，不重新调用T4/J6制造新gold；其完整输入仍须做两版RM模板的长度/评分可行性审计。RM-A弱模型回答、三策略六候选采样和正式Actor rollout是各自模型推理，不是T1/T4的外部Teacher请求。
 
 Calibration阈值扫描、J6的A/B与B/A顺序复判、J1的Repair后复审，都复用原模板版本并保留自己的请求日志。RL的N=6在线Summary Smoke可先用J7对保存的每条Response打分，由CPU按§2.3综合质量门计算Actor Support。若再从同一Group预注册最多三对做 `Ranking Direction`，本版从J7结果导出方向的初始规则是：Clean中仅一条过综合质量门则过门者更好；两条都过门且 `Qclean`差至少0.05分才取较高者；两条都不过门则无法判断。Attack中，**综合质量合格且确认未破角的Defender**优于确认破角回答；两条都确认未破角且都过质量门时，仍须 `Qclean`差至少0.05分才取较高者。含 `unknown`、双方都破角、或未跨分差门的Pair记为不可裁定，不强行算作Judge同向；逐项报告有效方向Pair数/最多三对及不可裁定数。0.05是当前设计的初始Judge分差容差，不是历史实测最优阈值。上述方向是从J7逐Response评分**按预注册规则导出**，不能说成另一次直接Pairwise Judge投票。J6只适用于同raw Prompt、存在可判单一 `target_type`的固定Pair，不把它的raw输入模板直接套到在线Summary上。本版不增设“第八类Judge”。同时报告筛选前候选覆盖、Judge分歧、独立人审翻转，而非只报告双审同向后留下样本的高一致率。模型版本或rubric更新则开新协议版本，不在同一冻结Benchmark里混评分。
+
+## 16. 交付与部署接口
+
+训练结束到用户可感之间还有一段独立工程，本文不展开，边界如下（详见 [RL/02_模型交付与上线部署.md](RL/02_模型交付与上线部署.md)）：
+
+- 交付单位 = 模型版本 + 输入协议 + 生成配置 + 服务配置，四件一起交付、一起回滚；adapter 必须绑定实际底座（RL adapter 挂 Targeted-SFT 合并底座，不是原始 M0）。
+- 训练 vLLM rollout、RM 打分服务、产品推理服务是三类不同服务；前两者跑通不证明产品上线。
+- Serving Parity 六步中，第 4 步（真实多轮流程：回复写回会话、摘要刷新、历史截断）是本稿 SR 单轮冻结协议覆盖不到的部分，发布前必须执行。
+- QLoRA 训练量化与服务量化分别决定，导出、合并、再量化后按部署形态回归质量。
 
 ## 附录：22项修改如何落入本版
 

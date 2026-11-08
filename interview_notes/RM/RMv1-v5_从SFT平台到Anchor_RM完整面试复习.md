@@ -29,7 +29,25 @@ RM Accuracy的分母是250 Pair
 但不是历史实跑结果
 ```
 
-主线：
+当前设计主线（附件母版基线）：
+
+```text
+SFT-final 平台（Support 高 / Mixed 高）
+→ 每个 SFT-final Group 随机选四个 turn 位置、四类错误各一
+   （候选槽位上限 3,780 × 4 = 15,120）
+→ chosen 来自 Teacher（同 raw 前缀；不匹配则按当前 x 重生）
+→ rejected 由较弱 Gemma policy 受控生成（错误只改目标维度）
+→ 最少确定性检查（同 x、非空、完整结束、可解析、无来源/标签泄漏）
+→ 双 Judge 匿名 A/B（winner / difference_valid / confidence / target_type）
+→ 单 Gap 门：双 Judge 平均分差 g >= 0.5（五分制）
+   Medium 仅用于 Long 高置信不足时补数
+→ RM-A = 10,000 Pair（wrong-role 3,000 / wrong-language 3,000 / short 2,000 / long 2,000）
+→ OpenRLHF + ZeRO-2 + QLoRA；SFT-final backbone + 新 scalar head
+```
+
+注意：当前设计**不使用 4D cheap filter**（4D 属历史线机制）。本文以下 §2–§4 的 4D/Q25/A/B/C-k 流程与 §4 的四阶段演进是**历史实跑证据链**（RM v1→v5，16,826→17,712），回答「为什么这样设计」；数值引用当前设计时一律以 10,000 主账为准。
+
+历史线主线：
 
 ```text
 RL前SFT进入平台
@@ -180,6 +198,8 @@ blind模型身份
 ```
 
 本版只锁定这个框架；封闭规则指标与开放 LLM Judge 如何进一步统一校准，后续单独展开。
+
+口径注：本节评测轴与 SR 数字属旧协议口径（N=4、Semantic Verbosity）。当前统一协议为 200 Scene × 3 组解码配置 × N=2，Verbosity 升级为 Density/Brevity 并把重复下沉为 Guard（见总览 §4.6）。旧 N=4 数字（Support 88.5% / Mixed 32.5% / All-Fail 11.5% 等）作为历史发现证据保留，不与新 N=2 面板拼成同一条趋势。
 
 ### RL 前 SFT 平台证据
 
@@ -1212,6 +1232,8 @@ warmup0.03
 
 该台账用于当前受控复现实验设计，不改写历史 v1/v2/v3 的真实配置。
 
+初始化对齐：当前设计的 RM-A 从 **SFT-final backbone（Gemma 线）+ 新 scalar head** 初始化；本节「同一 Qwen SFT2 base」是历史受控复现口径。历史 Qwen RM v5（acc 95.5% / gap 3.497）与 Gemma4 RM v5 复现（acc 97.5% / gap 6.462，score saturation 高、需 normalize/clamp）是两个不同模型，不能混成一条增长线。
+
 工程取舍：
 
 - 当前机器无 NVLink/P2P、双 NUMA；
@@ -1240,6 +1262,8 @@ online scorer与离线方向一致
 ```
 
 ## 6. RM v5 进入 RL 后的第一轮观察
+
+RM 通过条件不止总体 Pair Accuracy：还看分类型正确率、近似同质候选上的区分能力、长度捷径、离群分数、不同语言表现与同候选 raw/summary 对照。**高准确率不自动证明能指导 RL**——若考试主要是明显错语言/错角色，在线候选却大多形式正确，必须补测「都还不错的候选如何排序」。评分差小也不能直接推出无梯度：结合组内标准化、epsilon、数值精度与排序正确性判断（见 RM-B 正文 `group_reward_std` 一节）。
 
 RM v5 通过 A/B 后，进入 RL smoke。
 

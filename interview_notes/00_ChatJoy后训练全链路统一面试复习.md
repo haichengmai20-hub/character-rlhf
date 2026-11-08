@@ -1,55 +1,37 @@
-# ChatJoy 后训练全链路统一总览：从六轮 SFT、RM-A 到 Unified RM 与 RL-B.1
+# ChatJoy 后训练全链路统一总览：从模型选型、六轮 SFT、RM-A 到 Unified RM 与 RL-B
 
 ## 0. 结论先行
 
-> 配套阅读：[SFT 完整正文](SFT/Character-RLHF_SFT_Canonical_Full.md) → [RM-A 演进](RM/RMv1-v5_从SFT平台到Anchor_RM完整面试复习.md) → [RM-B 与定向 Hardening](RM/RMv6-v6.6_从Unified_Clean_Attack到定向Hardening完整面试复习.md) → [RL 完整流程](RL/01_RL完整流程与关键机制演进.md)。机制追问见 [项目薄弱点 30 问](技术分层/03_项目薄弱点面试问题与参考答案.md)。
+> 配套阅读：[模型选型](SFT/00_模型选型与小规模验证.md) → [SFT 完整正文](SFT/Character-RLHF_SFT_Canonical_Full.md) → [RM-A 演进](RM/RMv1-v5_从SFT平台到Anchor_RM完整面试复习.md) → [RM-B 与定向 Hardening](RM/RMv6-v6.6_从Unified_Clean_Attack到定向Hardening完整面试复习.md) → [RL 完整流程](RL/01_RL完整流程与关键机制演进.md) → [算法选型对照](RL/03_算法选型对照实验_DPO_GRPO_GSPO.md) → [交付与部署](RL/02_模型交付与上线部署.md)。机制追问见 [项目薄弱点 30 问](技术分层/03_项目薄弱点面试问题与参考答案.md)。
+>
+> 数字主账以《附件母版完善稿》为当前设计基线。本文旧版中的 44,280、B6=750、RM-B.2、RL-B 模拟面板等上一代设计数字，已在对应章节修正或明确标注为旧口径。
 
-ChatJoy 后训练不是简单地按“SFT v1、RM v2、RL v3”连续堆版本，而是围绕两个反馈闭环推进。
+ChatJoy 后训练不是按「SFT → RM → RL」线性堆版本，而是按决策链推进：业务为什么训练 → 为什么选这个模型 → 剩余问题属于哪一层（可生成性 / 偏好排序 / 奖励方向 / 优化）→ 对应层修复 → 独立评测验收 → 交付部署。
 
-第一阶段先用六轮 SFT 建立语言一致性、角色贴合、格式遵守和持续对话能力；SFT 训练完成后，立即建立并运行固定的 SR-Clean，验证模型是否已经能在同一 Scene 下生成合格候选，以及这种能力是否稳定。SFT 进入平台后，RM-A.x 使用 Format、Role、Language、Length 四个显式维度构建粗粒度偏好代理，其中实际 rejected 槽位主要是 wrong-role、wrong-language、length-short 和 length-long，Format 同时承担 chosen 质量门和结构护栏。RM-A.1～RM-A.4 通过低 Gap 删除、边界数据恢复和 Anchor 混合等数据实验，最终得到 RM-A.4；随后：
+**第 0 层：模型选型（前置层）。** 候选底座（Gemma4-26B-A4B IT / Qwen3-30B-A3B-Instruct-2507 / 较小模型 / API+prompt 基线）经 E0–E3 漏斗（运行可行性 → 原始能力 → 受控短训 → 部署复核）选出；跨 tokenizer 不按 loss 排名，只扩训入选者。详见选型专文。
 
-```text
-RL-A.1 consumes RM-A.4
-```
-
-RL-A.1 放大了 RM-A.4 能识别的显式偏好，但固定 SR-Clean 显示 Progression 和 Richness 很快进入平台；模型上线后的 Bad Case 抽样又暴露了 Attack Roledrop，Reward Trace 进一步确认：早期 Non-refusal 正奖励把“没有拒答但已经破角”的回答推到了 Group 顶部。这是固定评测和线上观测发现的问题，不是预先设计的受控实验。
-
-因此第二阶段补建独立的 SR-Attack，并将 RM 升级为覆盖 Anchor、Clean、Attack 的 RM-B.1。RM-B.1 使用细粒度 Clean Judge、Attack Redline、Defender Quality 和不可补偿 Hard Guard；RM-B.2 再通过同总量、同训练配置、同数据比例、同槽位的 C-k 替换，修复早期边界数据无控制回灌的问题。最终：
+**第一阶段：建立基础行为 + 第一版偏好。** 六轮 SFT（SFT-1 2,780 Group → SFT-final 3,780 Group / 22,680 监督回答）建立语言一致性、角色贴合、格式与持续对话能力；随后立即建立固定 SR-Clean，确认模型「会生成但不稳定」（Support 高、Mixed 高）——问题从能力覆盖转成相对选择，进入 RM-A（当前设计 10,000 Pair：wrong-role 3,000 / wrong-language 3,000 / short 2,000 / long 2,000；历史实跑线 16,826→17,712 提供「删低 Gap 掉精度」等证据）。随后：
 
 ```text
-RL-B.1 consumes RM-B.2
+RL-A consumes RM-A（Actor = Ref = 冻结 SFT-final）
 ```
 
-RL-B.1 使用：
+RL-A 放大了 RM-A 能识别的显式偏好，但固定 SR-Clean 显示 Progression 和 Richness 很快进入平台；模型上线后的 Bad Case 抽样又暴露了 Attack Roledrop，Reward Trace 进一步确认：早期 Non-refusal 正奖励把「没有拒答但已经破角」的回答推到了 Group 顶部。这是固定评测和线上观测发现的问题，不是预先设计的受控实验。
+
+**第二阶段：补行为 → 补偏好 → 再 RL。** 先按三层归因（Actor 不会生成 / RM 排错 / Reward 方向错），再对应修复：Targeted-SFT 从 SFT-final 重新初始化（不继承 RL-A 的奖励捷径；2,400 Group = Retention 1,200 + Clean-Richness 600 + Attack-Defend 600）；补建 SR-Attack 后，RM 升级为覆盖 Anchor、Clean、Attack 的 Unified RM-B：
 
 ```text
-Unified Scalar RM
-+ Redline Guard
-+ Degeneration Guard
-+ GRPO
-+ GSPO
-+ Source-conditioned KL
-+ 可选轻量 Span Credit
+RM-B = 30,000 Pair
+       = 9,000 Anchor 回放 + 15,000 Holistic Clean + 6,000 Attack
+Internal 650 选 checkpoint
+B6 = Core 250 + Clean 350 + Attack 200 = 800 验收
 ```
 
-在同一套 SR-Clean 与 SR-Attack 上，RL-B.1 的面试模拟结果为：
+B6 给定口径（RM 排序，不是 Actor 行为）：Core+Clean 362/600=60.3% → 516/600=86.0%；Attack 111/200=55.5% → 179/200=89.5%；整套 473/800=59.1% → 695/800=86.9%。
 
-```text
-SR-Attack True Roledrop
+**RL-B：Actor = Ref = 冻结 Targeted-SFT。** 最小主线 = Unified RM 正向质量 + 结构格式罚分 + GRPO 组内优势 + GSPO 序列级裁剪 + 固定 Reference KL；Conditioned KL 与 Span Credit 属于可选扩展，须有失败证据和对照才启用。最终行为由双 SR 三配置协议判定（至少两组过本阶段改善门 + 三组守住护栏）。**RL-B 没有给定成绩，待评测**——任何版本的模拟面板（含旧版的 34.0%→14.5%）都不作为结果引用。
 
-Step0：68/200 = 34.0%
-Final：29/200 = 14.5%
-
-绝对下降：
-34.0% - 14.5% = 19.5 个百分点
-
-相对下降：
-(68 - 29) / 68
-= 39 / 68
-= 57.4%
-```
-
-同时 SR-Clean 没有材料性回退，因此达到预注册目标后主动早停。这个早停结论来自固定评测，不属于“实验六”。
+**交付层。** SR 反复参与 checkpoint 选择属 SR-Dev；发布前另有 Final-Test（独立家族、不参与调参）与 Serving Parity 六步。交付单位 = 模型版本 + 输入协议 + 生成配置 + 服务配置，四件一起交付、一起回滚。详见交付专文。
 
 ---
 
@@ -57,34 +39,31 @@ Final：29/200 = 14.5%
 
 > 对应详解：[Benchmark 制作与指标计算](技术分层/01_Benchmark制作与指标计算_Judge一致性技术分层.md)（评测对象、Pair/Response/Scene 分母）；[训练参数选择与 LoRA](技术分层/02_训练参数选择与LoRA技术分层.md)（阶段配置与运行参数的区别）。
 
-### 1.1 RM 与 RL 版本号彼此独立
+### 1.1 版本号：当前设计线与历史映射线分开
 
-版本映射固定为：
+**当前设计线**（数字主账，与附件母版一致）：
 
 ```text
-SFT：
-SFT1
-→ SFT2-e1
-→ SFT2-final
-
-RM-A：
-RM-A.1 = 显式错误基础 RM
-RM-A.2 = 删除低 Gap / 中置信边界数据
-RM-A.3 = 恢复边界数据，但发生宽泛回灌
-RM-A.4 = 完整 Base + 小比例 Hard，形成 Anchor RM
-
-RL-A：
-RL-A.1 consumes RM-A.4
-
-RM-B：
-RM-B.1 = Unified Anchor + Clean + Attack RM
-RM-B.2 = 同量、同槽位 C-k 定向替换
-
-RL-B：
-RL-B.1 consumes RM-B.2
+模型选型 → 选定 IT 底座 M0
+SFT-1（2,780 Group）→ SFT-final（3,780 Group / 22,680 监督回答）
+RM-A = 10,000 Pair 显式错误偏好 RM（SFT-final backbone + 新 scalar head）
+RL-A consumes RM-A（Actor = Ref = 冻结 SFT-final）
+Targeted-SFT（从 SFT-final 初始化；2,400 = Retention 1,200 + Richness 600 + Defend 600）
+RM-B = 30,000 Pair Unified RM（Targeted-SFT backbone + 新 scalar head）
+RL-B consumes RM-B（Actor = Ref = 冻结 Targeted-SFT；成绩待评测）
 ```
 
-RM-A.1～A.4 的数字只描述 RM 自己的迭代。RM-B.1～B.2 也只描述 Unified RM 的迭代。RL 只有真正训练了新的 Actor 才增加 RL 版本，不能因为 RM 连续改了四次，就把 RL 机械写成 RL-5。
+**历史映射线**（仓库 v 号证据，只作证据链，不作当前设计）：
+
+```text
+SFT1 / SFT2-e1 / SFT2-final ≈ 历史 SFT 两波产物（clean32_for_sft1 13,128 / sft2 19,508）
+RM-A.1～A.4 ≈ 历史 RM v1→v2→v3→v5（16,826→14,826→18,955→17,712，真实训练台账）
+RL-A ≈ 第一轮 RL（历史上消费 RM v5 / 17,712）
+RM-B ≈ 历史 RM v6/v6.3 线（历史实跑 40,551，与当前设计 30,000 是两套数）
+RL-B ≈ 历史 RL-6.x 后期线（真实结局：v6.10 step90 停线，attack true break 未压下）
+```
+
+同量 C-k 替换在当前设计中是 RM-B 阶段内部的**受控归因实验**（区分「定向难例质量」与「更多数据/步数」的贡献），不再是独立生产版本 RM-B.2。RL 只有真正训练了新的 Actor 才增加 RL 版本，不能因为 RM 连续改了四次，就把 RL 机械写成 RL-5。
 
 ### 1.2 五类证据必须分开
 
@@ -101,7 +80,7 @@ SR-Clean、SR-Attack、A/Internal、B6 都属于评测。
 
 受控实验：
 主动改变一个因素并保留对照。
-例如 RM-A 的数据删除实验、RM-B.1→RM-B.2 的同量替换实验、
+例如 RM-A 的数据删除实验、RM-B 阶段内的同量替换受控实验、
 Conditioned KL 的 Source-Swap。
 
 线上观测：
@@ -128,8 +107,8 @@ Goodhart 定位
 RM-B.1→RM-B.2
 = 受控数据替换实验
 
-RL-B.1 达标早停
-= 固定双 SR 评测结果
+RL-B 继续或停止
+= 固定双 SR 三配置判定
 ```
 
 不存在额外的“八道独立决策门”。每个决定直接写在产生该决定的评测、实验或工程校验之后。
@@ -162,6 +141,22 @@ RL 中同一个 Prompt/Scene 采样得到的 G=6 条 Response。
 ```
 
 一个 Scene 不是单独一句用户问题。对于多轮 Scene，它必须包含完整 Role Card、前文 User/Assistant 历史和当前 User Turn。
+
+### 1.4 阶段主账与交接（当前设计 SSOT）
+
+| 阶段 | 初始化/固定对象 | 数据账 | 进入下一阶段前看什么 |
+| --- | --- | --- | --- |
+| 模型选型 | 候选模型及 revision（E0–E3 漏斗） | 公共短训子集 512 Group | 可行业、短训适应、部署成本 |
+| SFT-1 | 选定 IT 底座 M0 | 2,780 Group × 6 = 16,680 监督回答 | 语言、角色、承接与格式 |
+| SFT-final | 从 SFT-1 继续（含旧数据回放） | 3,780 Group × 6 = 22,680 | 相对 SFT-1 的收益与退化；不只看 loss |
+| RM-A | SFT-final backbone + 新 scalar head | 10,000 Pair（30/30/20/20） | 排序、分切片误差、在线候选区分 |
+| RL-A | Actor=SFT-final；Ref=冻结 SFT-final；RM-A 固定 | 3,200 Prompt × G=6 | 相对 Step0 的生成质量与失败类型 |
+| Targeted-SFT | 从 SFT-final 初始化（RL-A 只作 failure miner） | 2,400 Group = Retention 1,200 + Richness 600 + Defend 600 | 补短板且守住相对 SFT-final 的旧能力 |
+| RM-B | Targeted-SFT backbone + 新 head（不从 RM-A 续训） | 30,000 = 9,000 Anchor 回放 + 15,000 Clean + 6,000 Attack | Core 保留（旧对新错）、Clean/Attack 排序 |
+| RL-B | Actor=Targeted-SFT；Ref=同一 Targeted-SFT；RM-B 固定 | 3,200 Prompt（Clean 2,240 + Attack 960）× G=6 | 三配置双 SR 判定；成绩待评测 |
+| 产品服务 | 通过验收的 Actor | — | Final-Test + Serving Parity + 灰度 |
+
+三条血缘口径：2,400 已含 1,200 Retention 回放；30,000 已含 9,000 Anchor，不再相加；SFT-final 继续训练会重复暴露旧数据，去重数据量、累计样本暴露、监督 token 暴露分别统计。Raw/Summary 输入差异（RM 离线 raw history vs RL 在线 Summary）是显式登记的分布假设，须按对照实验验证（见附件母版 §3.3）。
 
 ---
 
@@ -277,7 +272,7 @@ tokenized_length_rejected
 
 两个分支必须使用相同 tokenizer、chat template、EOS、Pooling 和前缀截断策略，不允许 chosen 保留完整历史、rejected 却被另一套截断逻辑裁掉。
 
-### 2.3 RL-A.1 与 RL-B.1
+### 2.3 RL-A 与 RL-B
 
 > 对应详解：[RL 完整流程](RL/01_RL完整流程与关键机制演进.md) §1.3–1.5（Prompt、策略角色、Attention/Response Mask）。
 
@@ -358,6 +353,8 @@ High Quality Pool：
 ```
 
 这里所有 Session 数与六轮回答数都可以直接相乘复算。
+
+口径对齐：本节中间通过数为上一代统一设计演练；当前设计的固定锚点 = SFT-1 2,780 Group（SFT-final 的子集）→ SFT-final 3,780 Group / 22,680 监督回答，整数演练台账见附件母版 §1.1。
 
 ### 3.2 Pre-Teacher Cheap Rule：只判断是否值得调用 Teacher
 
@@ -760,7 +757,7 @@ generation_config_id
 manifest_hash
 ```
 
-SFT、RL-A.1、RL-B.1 比较时必须使用同一个 Scene Manifest、同一组 Prompt/History、同一 Seed Rule、相同 Temperature/Top-p、相同 Max New Tokens。
+SFT、RL-A、RL-B 比较时必须使用同一个 Scene Manifest、同一组 Prompt/History、同一 Seed Rule、相同 Temperature/Top-p、相同 Max New Tokens。
 
 ### 4.2 哪些指标由 CPU 算，哪些需要 LLM
 
@@ -1040,7 +1037,7 @@ Rubric 修改的原因有明确机制依据：旧的粗粒度 Verbosity 或 Form
 
 冻结新的 SR-Clean-v2 Manifest
 
-所有可加载的 SFT、RL-A.1、RL-B.1 Checkpoint
+所有可加载的 SFT、RL-A、RL-B Checkpoint
 都在这个 v2 Manifest 上重新生成或重新 Judge
 
 旧 Semantic Verbosity 分数不直接改名为 Density/Brevity
@@ -1091,6 +1088,8 @@ scene_hash
 ## 5. RM-A.x：用显式错误建立 Anchor 偏好代理
 
 > 对应详解：[RM-A 完整复习](RM/RMv1-v5_从SFT平台到Anchor_RM完整面试复习.md)（4D、Q25、A/B/C-k 与四阶段演进）；低 Gap 和归因追问见 [项目薄弱点问答](技术分层/03_项目薄弱点面试问题与参考答案.md) Q15–Q19。
+
+> **主账对齐**：本节的 4D/Q25/A-eval 流程与 A.1～A.4 演进（16,826→17,712）是**历史实跑证据链**（RM v1→v5）。当前设计的 RM-A 主账为 10,000 Pair（30/30/20/20），SFT-final backbone + 新 scalar head，构对合同 = 每 Group 随机四个 turn 位置、四类错误各一（候选槽位上限 15,120）、双 Judge 同向 + 单 Gap 门 g≥0.5，不再使用 4D cheap filter；RL-A 消费的是当前设计 RM-A。两套数字分开讲：历史线回答「为什么这样设计」（删低 Gap 掉精度、宽泛回灌扰动分布），设计线回答「现在怎么做」。
 
 ### 5.1 Pair 怎样构造
 
@@ -1592,9 +1591,11 @@ RL-A.1 consumes RM-A.4
 
 ---
 
-## 6. RL-A.1：粗代理如何被 RL 放大
+## 6. RL-A：粗代理如何被 RL 放大
 
 > 对应详解：[RL 完整流程](RL/01_RL完整流程与关键机制演进.md) §2（Clean 平台、线上 Attack、Non-refusal Goodhart 与分层归因）。
+
+初始化合同：Actor = SFT-final，Ref = 冻结 SFT-final（不是 Gemma Base），RM-A 固定。在线 Actor 与 RM scorer 使用同一 Summary 上下文（`Role Card + History Summary + Current User`）；RM 离线训练仍用 raw history，这个 raw/summary 分布差异按对照实验显式验证，不默认已解决。
 
 RL-A.1 使用完整多轮前缀，每个 Prompt 采样：
 
@@ -1708,6 +1709,8 @@ Composite Reward 排对，但 Actor 不改善
 
 > 对应详解：[Unified RM 完整复习](RM/RMv6-v6.6_从Unified_Clean_Attack到定向Hardening完整面试复习.md) §5–7（六 Source、四轴 Judge、Gap 与风险分流）；评测和标签口径见 [Benchmark 技术分层](技术分层/01_Benchmark制作与指标计算_Judge一致性技术分层.md) §3–5。
 
+> **主账对齐**：本节以下出现的 44,280（40/50/10）、四轴训练标签、RM-B.1/RM-B.2 双版本、B6=750 等为**上一代统一设计口径**，当前设计基线以附件母版为准：RM-B = 30,000 Pair（9,000 Anchor 回放 + 15,000 Holistic Clean + 6,000 Attack），六 Source = Targeted-SFT / RL-A / Gemma Base（各两档温度），Clean 为 holistic 偏好（单 Gap 门 g≥0.5，不拆四类训练标签），backbone 从 Targeted-SFT 初始化，Internal 650、B6 = 800。本节机制（不可补偿 Guard、Redline 分支、六 Source 匿名、每 Prompt ≤3 Pair）继续有效；数值引用一律以附件母版为准。
+
 ### 7.1 为什么不能再继续给 Rule 加正分
 
 RM-B 的职责重新划分为：
@@ -1729,19 +1732,28 @@ Unified RM 仍只有一个 Scalar Score Head。4-Axis、Dual Judge 和 Attack �
 
 ### 7.2 训练数据主账
 
-RM-B.1 当前统一设计：
+当前设计（附件母版基线）：
+
+```text
+总计：30,000 Pair
+
+Anchor 回放：
+9,000 Pair = 30%（RM-A 10,000 中按类型抽 90%，原 pair_id 保留）
+
+Holistic Clean：
+15,000 Pair = 50%（natural 12,000 + Gemini 直接构对 3,000）
+
+Attack：
+6,000 Pair = 20%（natural 4,000 + Gemini 2,000；五类各 1,200）
+```
+
+上一代统一设计（44,280 / 40/50/10，已被取代，仅作机制参考）：
 
 ```text
 总计：44,280 Pair
-
-RM-A.4 Anchor：
-17,712 Pair = 40%
-
-Clean：
-22,140 Pair = 50%
-
-Attack：
-4,428 Pair = 10%
+RM-A.4 Anchor 17,712 = 40%
+Clean 22,140 = 50%
+Attack 4,428 = 10%
 ```
 
 Anchor 防止显式 Role、Language 和 Length 边界遗忘；Clean 学 hard-pass 回答之间的细粒度质量；Attack 学 Defender 与 Roledrop 的安全排序。
@@ -2080,15 +2092,17 @@ Core、Clean、Attack 必须分别标准化，不能让 Attack 的大 Score Span
 
 ---
 
-## 8. RM-B.1 到 RM-B.2：同量、同槽位的 C-k 实验
+## 8. RM-B 阶段内的同量 C-k 受控归因实验
 
 > 对应详解：[RM-B 训练配置、C-k 与 B6 验收](RM/RMv6-v6.6_从Unified_Clean_Attack到定向Hardening完整面试复习.md) §8–11；受控数据替换的归因边界见 [项目薄弱点问答](技术分层/03_项目薄弱点面试问题与参考答案.md) Q19。
+>
+> 定位变化：C-k 同量替换不再是独立生产版本 RM-B.2，而是 RM-B 阶段内部的受控归因实验——在总 Pair、配比、Batch、Step、LR、LoRA 全部固定的前提下替换同槽位 Pair，用于区分「定向难例质量」与「更多数据/更多步数」。当前设计 30,000 主账下的替换上限待重算预注册；本节旧口径数字仅作机制参考。
 
 ### 8.1 RM-B 共同训练配置
 
 > 参数解释：[训练参数选择与 LoRA](技术分层/02_训练参数选择与LoRA技术分层.md) §3–7（rank、alpha、target modules、LR、Batch、步数、精度与并行）。
 
-RM-B.1 与 RM-B.2 都从同一个 Gemma4 SFT Merged Backbone 和新 Score Head 初始化；RM-B.2 不从 RM-B.1 Checkpoint 继续训练。
+当前设计：RM-B 从 Targeted-SFT Backbone + 新 Score Head 初始化，不从 RM-A 续训。上一代口径中，受控替换的两侧（RM-B.1 / RM-B.2）从同一个 Gemma4 SFT Merged Backbone 和新 Score Head 初始化，替换臂不从对方 Checkpoint 继续训练——这一「同初始化、不续训」原则在当前设计下不变。
 
 固定：
 
@@ -2124,87 +2138,75 @@ epochs=1
 fixed seed
 ```
 
-训练步数：
+训练步数（以 Trainer 的 `drop_last`、`global_step` 和 `samples_seen` 为准）：
 
-$$
-44,280/64=691.875
-$$
+```text
+当前设计：30,000/64 ≈ 469 optimizer steps
+上一代口径：44,280/64 = 691.875
+```
 
 如果末批参与更新，则预期 692 个 Optimizer Step；最终以 Trainer 的 `drop_last`、`global_step` 和 `samples_seen` 为准。
 
 ### 8.2 B6 固定评测
 
-B6 不参与训练：
+B6 不参与训练（当前设计，800 Pair）：
 
 ```text
-B6-Core：250 Pair
-B6-Clean：300 Pair
-B6-Attack：200 Pair
-总计：750 Pair
+B6-Core：250 Pair（原样复用旧 B-RMBench，保留 pair_id 与标签）
+B6-Clean：350 Pair
+B6-Attack：200 Pair（五类攻击意图各 40）
+总计：800 Pair
 ```
 
-RM-B 的固定验收参数：
+唯一评测 Pair 账：旧 A 250 + 旧 B 250 + Internal 新增 400 + B6 新增 550 = 1,450；四套件槽位 250+250+650+800 = 1,950，差额 500 为 Core 跨阶段复用，不是重复题。
+
+RM-B 的固定验收（预注册工程门，待校准，不是实跑结果）：
 
 ```text
 B6-Core：
-Accuracy >=232/250 =92.8%
-New Core Regression <=5 Pair
+与 RM-A 基线同题比较
+旧对新错 n_break <= 5 Pair（待校准容差）
+同时报告 n_fix 与净变化，不用其他题改善掩盖遗忘
 
-B6-Clean：
-Overall >=240/300 =80.0%
-Role >=68/90
-Progression >=57/75
-Richness >=57/75
-Density >=45/60
-Hard >=42/60 =70.0%
-Borderline >=72/90 =80.0%
-Low-Margin <=45/300 =15.0%
-
-B6-Attack：
-Redline >=128/150 =85.3%
-Subtle >=72/90 =80.0%
-Defender >=38/50 =76.0%
-每个 Attack 类型 >=30/40 =75.0%
+B6-Clean / B6-Attack：
+按 350 / 200 分母分切片报告 Accuracy 与 Low-Margin
+旧 750 配额下的 240/300、128/150 等数值门随分母作废
+新门在建集与 Calibration 完成后预注册
 ```
 
 B6 标签冻结后，比较不同 RM 只需要本地 RM 推理和 CPU 统计，不再为每个 Checkpoint 调 LLM API。
 
-### 8.3 为什么做 RM-B.2
+### 8.3 为什么做同量替换（受控归因）
 
-RM-B.1 在模拟 B6 上已经明显优于 RM-A.4：
-
-```text
-B6-Core：
-RM-A.4  237/250 =94.8%
-RM-B.1  235/250 =94.0%
-
-B6-Clean：
-RM-A.4  181/300 =60.3%
-RM-B.1  246/300 =82.0%
-
-B6-Attack：
-RM-A.4  111/200 =55.5%
-RM-B.1  167/200 =83.5%
-```
-
-但是可选的 Frozen RL-A.1 Rollout Bank 仍显示：
+当前给定的 B6 口径（RM 排序，不是 Actor 行为；来源：附件母版 §10.4）：
 
 ```text
-RM-B.1 Top-1 True Roledrop：
-4/50
+Core+Clean（600 Pair）：
+RM-A  362/600 = 60.3%
+RM-B  516/600 = 86.0%
+
+Attack（200 Pair）：
+RM-A  111/200 = 55.5%
+RM-B  179/200 = 89.5%
+
+整套 B6（800 Pair）：
+RM-A  473/800 = 59.1%
+RM-B  695/800 = 86.9%
 ```
 
-超过目标 `2/50`。这说明 RM-B.1 的大方向正确，但当前 Actor 的 Subtle Attack 和部分 Clean Low-Margin 仍不稳。
+Core 250 与 Clean 350 各自的正确数仍未知：Core 单独是否退化要看 n_break 记录，不能用合计改善掩盖遗忘。
+
+上一代设计中的 Frozen Rollout Bank 观察（Top-1 True Roledrop 4/50 → 2/50）属于受控归因模拟口径，用于解释同量替换实验的动机；当前设计不以这些数字作为验收依据。
 
 Frozen Bank 是重复比较多个 RM 时的可选诊断工具，不是全局强制 Benchmark；一旦用它推动 C-k 决策，它的 Actor Hash、Prompt、生成协议和 Judge 标签就必须冻结。
 
 ### 8.4 C-k 怎样替换
 
-RM-B.2 固定：
+受控替换臂固定（机制合同，数字为上一代口径）：
 
 ```text
-相同 Gemma4 SFT Base 和 Hash
-相同 44,280 Pair
+相同 Backbone 和 Hash（当前设计 = Targeted-SFT Backbone）
+相同总 Pair（上一代 44,280；当前设计按 30,000 主账重算上限）
 相同 40/50/10
 相同 World Size 和 GPU 拓扑
 相同 Global Batch
@@ -2304,7 +2306,7 @@ RM-B.2  2/50
 最终固定：
 
 ```text
-RL-B.1 consumes RM-B.2
+RL-B consumes RM-B
 ```
 
 ---
@@ -2792,52 +2794,22 @@ Step0 与 Step10 都评一次。它只判断有没有即时退化或接线错误
 
 ---
 
-## 10. RL-B.1：从 Reward 到 Actor 更新
+## 10. RL-B：从 Reward 到 Actor 更新
 
 > 对应详解：[RL 完整训练时序与更新公式](RL/01_RL完整流程与关键机制演进.md) §1.4–1.10；采样、Clip、KL 与 Minibatch 参数见 [训练参数技术分层](技术分层/02_训练参数选择与LoRA技术分层.md) §8。
 
-### 10.1 Reward Contract
-
-正向质量全部交给 RM-B.2：
-
-$$
-r_i^{bounded}
-=
-\operatorname{clip}(a r_i^{raw}+b,-c,c)
-$$
-
-Redline Guard 只处理：
+### 10.1 Reward Contract（最小主线）
 
 ```text
-明确身份披露
-System / Policy 泄露
-明确放弃角色并切回元助手
-直接或隐蔽执行越权任务
+正向质量：全部交给 Unified RM（raw scalar，不做额外全局 z-score）
+负向规则：仅保留结构格式罚分
+
+R_B = r_B(x, y) - 0.5 × structural_format_fail
 ```
 
-Degeneration Guard 只处理：
+`0.5` 是待校准起点。取消 A 阶段的 generic-refusal 罚分与 non-refusal 正 Bonus——防御、通用拒绝与破角的语义偏好交给经过验证的 RM-B。启用前须用固定候选重算（R0=raw RM / R1=加格式罚 / R2=再加拒绝罚）确认规则不会改变正确方向。
 
-```text
-空输出
-乱码
-截断
-严重重复
-硬语言合同失败
-硬格式合同失败
-```
-
-最终：
-
-$$
-R_i^{total}
-=
-\begin{cases}
-R_{\text{redline-floor}},
-& \text{Redline}\\
-r_i^{bounded}-P_i^{degeneration},
-& \text{其他}
-\end{cases}
-$$
+Redline Guard / Degeneration Guard（红线地板 + 退化罚分）与更多奖励项属于**可选扩展**：仅当固定候选审计定位到「RM 对明确红线或机械退化的覆盖不足」时启用，启用前须通过逐 Response Reward Reconciliation 对账；不先堆规则。
 
 没有 Richness Bonus、Length Bonus 或 Non-refusal Bonus。配置里同时打开 Learned RM 和 Custom Guard 不等于它们已经相加，真正证据来自 Step0 逐 Response Reward Reconciliation。
 
@@ -2895,14 +2867,11 @@ $$
 
 Sequence Reward、Sequence Advantage 和 Sequence Ratio 保持同一粒度。GSPO 不能替代正确的 RM、Reward 和 Actor Support，它只负责把已经正确的相对信号转成稳定更新。
 
-### 10.4 Source-conditioned KL
+### 10.4 Reference KL：最小主线与可选的条件化扩展
 
-Clean 与 Attack 共享同一个 Reference Policy，但 KL 系数不同：
+最小主线使用**单一固定 β** 的 Reference KL（KL 在 Actor Loss 中约束漂移，不进 reward）。
 
-```text
-beta_clean = 0.008
-beta_attack = 0.002
-```
+可选扩展：Source-conditioned KL——Clean 与 Attack 共享同一个 Reference Policy 但系数不同（历史 v6.10 口径 `beta_clean = 0.008 / beta_attack = 0.002`，引用须带版本限定）。触发条件：固定 β 下观察到不同切片呈现可解释的不同漂移代价，且值得用受控对照验证；启用前必须通过下述无训练 Source 交换实验证明 Mask 真正进入 Loss。
 
 含义：
 
@@ -2983,7 +2952,7 @@ weighted_kl
 
 ---
 
-## 11. RL-B.1 如何由双 SR 评测决定继续或早停
+## 11. RL-B 如何由双 SR 三配置判定决定继续或停止
 
 > 对应详解：[RL 停线与最终效果](RL/01_RL完整流程与关键机制演进.md) §4.5；效果替代解释见 [项目薄弱点问答](技术分层/03_项目薄弱点面试问题与参考答案.md) Q25（变短、模板化与过度拒绝）。
 
@@ -3011,96 +2980,32 @@ Meta Refusal / Role Abandonment
 Defender Quality
 ```
 
-预注册成功条件：
+预注册判定协议（三配置，当前设计；详见附件母版 §2.4 / §11.3）：
 
 ```text
-True Roledrop <=15%
+D1 (T=0.85, p=0.85) / D2 (1.0, 0.90) / D3 (1.2, 0.95)
+每 Scene 每配置两个固定 seed
+Clean 200×2、Attack 100×2；三组合计 1,800 Responses，仍只有 300 个唯一 Scene
 
-相对 Step0 下降 >=50%
+RL-B 的 Win 条件（固定基线 = 本轮 Step0，即 Targeted-SFT）：
+True Roledrop 下降至少 3pp（Attack 分母 200 时净少 6 条）
 
-SR-Clean 不材料性回退
-```
-
-SR-Clean“不退”统一定义为：
-
-```text
-Language / Format 等硬护栏：
-下降不超过 2.0 个百分点
-
-Role / Progression / Richness / Density：
-任一均值下降不超过 0.05
-
-Severe Repetition：
-不得出现材料性上升
-
+护栏（三组全部通过）：
+Clean Language / Format 通过率各最多降 2pp
+Role / Progression / Richness / Density 与 Qclean 均值各最多降 0.05
+Severe Repetition / 截断率各最多升 1pp
+Attack True Roledrop 最多升 2pp，另报五类切片
 不得出现新的系统性角色放弃或模板拒答
+
+Better(C, C0) = 至少两组过 Win 门 ∧ 三组全部过护栏
+生产主配置 Dprod（若与 D1–D3 不同）必须自身达标，不能用另两组抵消
 ```
 
-面试模拟结果：
+**RL-B 没有给定成绩，待评测。** 先报告真实分子分母，再按上述协议判定继续或停止；不引用旧版 34.0%→14.5% 等任何模拟面板作为结果。
 
-```text
-SR-Attack True Roledrop
+历史对照（真实结局，[历史实跑｜v6.10 fixed-68 协议]）：Step0 True Break 23/68 = 33.8% → Step90 25/68 = 36.8%，Clean 守住但 Attack 未降，step90 停线。它证明的是「当时的 Actor、RM、Reward 与 KL 合同下，继续加 step 没有转化为 attack 改善」，不是 GRPO 失败；当前设计正是针对该结局的重构。
 
-Step0：
-68/200 = 34.0%
-
-Final：
-29/200 = 14.5%
-
-相对下降：
-(68-29)/68 = 57.4%
-```
-
-SR-Clean：
-
-```text
-                           Step0      Final
-
-Language Pass              388/400    390/400
-Format Pass                380/400    382/400
-Severe Repetition            4/400      3/400
-
-Role Fidelity                 4.10       4.08
-Progression                   3.86       3.90
-Richness                      4.02       4.01
-Density/Brevity               3.88       3.91
-```
-
-逐项检查：
-
-```text
-14.5% <=15%
-→ 绝对门通过
-
-57.4% >=50%
-→ 相对改善门通过
-
-Language +0.5pp
-Format +0.5pp
-Repetition 减少 1 条
-Role -0.02
-Progression +0.04
-Richness -0.01
-Density +0.03
-→ SR-Clean 不材料性回退
-```
-
-因此主动早停。
-
-这是固定评测做出的停止决定，不是一个额外实验，也不能把 19.5 个百分点单独归因给 Conditioned KL、Span、某一种 Guard 或某一批 C-k。能够支持的结论是：
-
-```text
-RM-B.2
-+ Unified Reward
-+ GRPO
-+ GSPO
-+ Conditioned KL
-+ 当前完整工程合同
-
-作为整体达到了预注册目标
-```
-
-Span 即使在 Smoke 后启用，也不进入这 19.5 个百分点的独立成功归因，除非未来单独完成有对照的 Span A/B。
+即使未来 RL-B 达标，组合方案整体改善也只支持整体结论；没有消融，不把收益单独归因给 Conditioned KL、Span、某一种 Guard 或某一批数据。
 
 最终 Checkpoint 还要顺序完成：
 
@@ -3266,15 +3171,13 @@ vLLM utilization 默认约0.78
 >
 > SFT 完成后，我们先建 SR-Clean，而不是看训练 Loss 决定是否上 RL。Scene 是 Role Card、完整历史和当前 User Request 组成的冻结评测单元。历史 N=4 评测里，Support 是 88.5%、Mixed 是 32.5%、All-Fail 是 11.5%，说明模型已经会生成合格答案，但同一 Scene 仍会同时产生好坏回复，所以从“能力覆盖问题”转成“相对选择问题”，进入 RM。统一跨阶段协议改成同一 200 个 Clean Scene、每 Scene N=2；旧 N=4 的数量不复用。
 >
-> RM-A 使用 Format、Role、Language、Length 四个显式维度做粗粒度代理。4D 阈值不是拍脑袋，而是在 Dual Judge 冻结的 250 Pair A-eval 上做宽松、中心和严格扫描；中心点冻结 chosen 0.62、role gap 0.12、language gap 0.30、length gap 0.20。RM-A.2 删除约 2,000 个低 Gap 和中置信边界 Pair 后 Accuracy 从 94.5% 降到 86.4%，说明低 Gap 不等于错误；RM-A.3 又因为宽泛回灌边界数据扰动基础分布；RM-A.4 最终回到完整 Base 加约 5% Hard，得到 17,712 Pair 的 Anchor RM。因此 RL-A.1 明确消费 RM-A.4。
+> RM-A 用显式错误建立第一版偏好：当前设计 10,000 Pair，wrong-role、wrong-language、short、long 按 30/30/20/20，chosen 来自 SFT Teacher、rejected 由较弱 policy 受控生成，双 Judge 同向加单 Gap 门确权。历史实跑线提供了设计依据：删掉约 2,000 个低 Gap 边界 Pair 后 Accuracy 从 94.5% 掉到 86.4%，说明低 Gap 不等于错误标签；宽泛回灌又会扰动基础分布；最终「完整 Base + 小比例难例」的 Anchor 形态胜出。
 >
-> RL-A.1 在 Clean 上很快进入平台，上线后才发现 Attack Roledrop。Reward Trace 发现当时的 Non-refusal 正 Bonus 会奖励“没有拒答但已经承认自己是模型”的回答，使它获得最高 Group Reward，这属于 Goodhart。于是我们补建 SR-Attack，并把 RM 升级成 40% Anchor、50% Clean、10% Attack 的 RM-B.1，共 44,280 Pair。Clean 用 Role、Progression、Richness、Density 四轴和不可补偿 Guard；Attack Redline 由 Dual Judge 确认 chosen 安全、rejected 真破角，不允许 Clean 高分补偿安全红线。
+> RL-A 在 Clean 上很快进入平台，上线后才发现 Attack Roledrop。Reward Trace 发现当时的 Non-refusal 正 Bonus 会奖励“没有拒答但已经承认自己是模型”的回答，使它获得最高 Group Reward，这属于 Goodhart。于是我们补建 SR-Attack，先做 Targeted-SFT 补防御行为，再把 RM 升级成 30% Anchor 回放、50% Holistic Clean、20% Attack 的 Unified RM-B，共 30,000 Pair。Clean 走整体偏好排序加不可补偿 Guard；Attack Redline 由双 Judge 确认 chosen 安全、rejected 真破角，不允许 Clean 高分补偿安全红线。
 >
-> RM-B.2 不继续训练 RM-B.1，而是从同一 SFT Base 重新初始化，保持总 Pair、数据比例、Batch、Step、LR 和 LoRA 全部相同，只在同 target、语言、长度和 Source 槽位内用 C-k 替换最多 4,428 Pair。B6-Clean 从 82.0% 到 86.0%，B6-Attack 从 83.5% 到 89.5%，Core 仍守住，Frozen Bank Top-1 Roledrop 从 4/50 降到 2/50，因此 RL-B.1 固定消费 RM-B.2。
+> 第二阶段先归因再动手：固定候选检查 Actor 能不能生成合格 Defender、RM 排不排得对、最终 Reward 方向对不对。Targeted-SFT 从 SFT-final 重新初始化，用 1,200 组回放加 600 组 Richness、600 组防御补行为，不继承 RL-A 的奖励捷径。RM-B 从 Targeted-SFT backbone 加新 scalar head 初始化，30,000 Pair 里 9,000 条是 RM-A Anchor 原样回放，另加 15,000 条 Holistic Clean 和 6,000 条 Attack；Internal 650 选 checkpoint，B6 按 Core 250、Clean 350、Attack 200 共 800 对验收。给定口径下 RM-A 到 RM-B 在 Core+Clean 上从 60.3% 到 86.0%，Attack 从 55.5% 到 89.5%；Core 单独是否守住要看旧对新错记录。
 >
-> 正式 RL 前只有一套 10-Step Smoke。Step0 先保存 N=6 Actor Rollout，用同一 RM、模板、Pooling 和 Scale/Clip 离线重算 Reward，并重跑 Guard，对账 `rm_score_used、guard_type、guard_value、composite_reward`；同一批 Response 再交给冻结 Judge，检查 Actor Support、Unsafe Top-1 和最多三个预注册 Pair 的排序。Step0 通过后才允许启动 Span 和后续 10 个更新 Step。Span 训练时只看 Attack、负 Advantage、高精度坏 Span、Token 对齐和 Mask 子集条件，不再动态判断 Actor Support 或 RM 排序。
->
-> RL-B.1 最终使用 Unified RM、Redline Guard、Degeneration Guard、GRPO、GSPO 和 Conditioned KL。SR-Attack 的 True Roledrop 从 68/200，也就是 34.0%，降到 29/200，也就是 14.5%，相对下降 57.4%；SR-Clean 的语言、格式、角色、剧情、Richness 和 Density 没有材料性回退，所以达到预注册目标后主动早停。这个结果属于固定评测，不是额外实验，也不把收益单独归给 Span 或 KL。
+> 正式 RL 前只有一套冒烟：保存 Rollout 离线重算 Reward 对账，冻结 Judge 检查 Actor Support、Unsafe Top-1 与预注册 Pair 方向。RL-B 的最小主线是 Unified RM 加结构格式罚分、GRPO 组内优势、GSPO 序列级裁剪和固定 Reference KL；Conditioned KL 和 Span 是有失败证据才启用的可选扩展。最终行为用双 SR 三配置判定：至少两组过改善门、三组全守护栏才算更好。RL-B 成绩待评测——历史后期一轮 RL 的真实结局是 clean 守住但 attack 没有压下、step90 停线；我们不拿任何模拟面板当结果。
 
 本稿锚定以下四份正文：
 

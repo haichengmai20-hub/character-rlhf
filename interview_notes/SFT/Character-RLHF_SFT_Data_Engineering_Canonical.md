@@ -1,5 +1,7 @@
 # Character-RLHF SFT 数据工程：从真实 Session 到 Multi-turn Character SFT Actor
 
+> 本文是 [SFT 完整正文](Character-RLHF_SFT_Canonical_Full.md) 的派生速查，不形成第二套主账。当前设计锚点：SFT-1 = 2,780 Group（SFT-final 的子集）→ SFT-final = 3,780 Group / 22,680 监督回答；下方 Data Funnel 为上一代设计演练口径（当前整数演练台账见附件母版 §1.1）。LoRA 当前设计 r64/α128（下文 r32/α64 为历史实跑口径）；cutoff 按完整轨迹 token 分布与硬件 profile 冻结（3072/1536 为历史值）。底座经 E0–E3 选型漏斗确定，见 [00_模型选型与小规模验证](00_模型选型与小规模验证.md)。
+
 ## Core Pipeline
 
     Production Conversation
@@ -90,10 +92,10 @@ $$
 
 ## Training
 
--   30B model scale
+-   30B model scale（历史 Gemma 线口径）
 -   8× RTX5090 32GB
 -   NF4 QLoRA
--   LoRA rank 32
+-   LoRA rank 32 / alpha 64（历史实跑；当前设计 r64/α128）
 -   DeepSpeed ZeRO-2/FSDP
 -   assistant-only MLE
 

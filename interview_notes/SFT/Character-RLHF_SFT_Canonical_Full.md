@@ -89,6 +89,15 @@ Character SFT 学习的是：
 
 ---
 
+# 0.5 前置与后置接口（选型、长度、切阶段、部署输入）
+
+- **上游选型**：底座 M0 不在本文拍板。候选（Gemma4-26B-A4B IT / Qwen3-30B-A3B-Instruct-2507 / 较小模型 / API+prompt 基线）经 E0–E3 漏斗（运行可行性 → 原始能力 → 受控短训 → 部署复核）选出；跨 tokenizer 不按 loss 排名。见 [00_模型选型与小规模验证](00_模型选型与小规模验证.md)。
+- **Cutoff 原则**：由完整 Head/Continuation 轨迹的实际 token 分布、chat template 后长度和硬件 Forward/Backward profile 冻结。本文出现的 3072/1536 是**历史实跑记录**，不是普遍最优值，也不是当前设计的冻结值。不能先截掉多轮再继续称「完整六轮」。
+- **继续训练 vs 切阶段的判据**：不看「SFT 打顶再 RL」的线性叙述，按能力覆盖与信号可信度判断——目标行为已有覆盖（Support 高）、剩余问题可由可信偏好信号区分（Mixed 高）、预期投入划算时进入 RM；合格候选极少或奖励不可靠时先补示范。详见 §14。
+- **部署输入适配**：若目标服务使用 Summary 输入协议，须先完成 raw/summary 对照实验（同候选排序是否翻转、关键事实是否保留），再决定是否加入同协议监督数据；不能只在服务端改格式而不验证。
+
+---
+
 # 1. 从第一性原理定义 SFT 数据
 
 ## 1.1 SFT 本质：条件最大似然估计
@@ -478,6 +487,8 @@ high\ correlation
 ---
 
 # 4. 数据漏斗：完整数字版本
+
+口径对齐：下表中间通过数为**上一代统一设计演练**。当前设计的固定锚点是 SFT-1 = 2,780 Group（SFT-final 的子集）与 SFT-final = 3,780 Group / 22,680 监督回答；生产漏斗的整数演练台账见附件母版 §1.1（候选 6,000 → Pre 通过 5,400 → Teacher+Post 4,800 → Direct Accept 3,000 / Repair 成功 900 → 先冻 SFT-1 再补至 3,780）。两套漏斗机制相同，数字不可互相拼接。
 
 最终采用：
 
@@ -991,12 +1002,12 @@ role+user\ history
 
 真实训练 tokenizer + chat template。
 
-仓库真实：
+历史实跑记录（当前设计的 cutoff 待按完整轨迹 token 分布与硬件 profile 冻结，不沿用为前提）：
 
 Gemma4 SFT：
 
 ```math
-\boxed{cutoff\_len=3072}
+cutoff\_len=3072
 ```
 
 Qwen：
@@ -1336,7 +1347,7 @@ L(\tau)
 要求：
 
 ```math
-L(\tau)\le3072
+L(\tau)\le 冻结\ cutoff（历史实跑为 3072；当前设计待按分布冻结）
 ```
 
 超出：
@@ -1666,6 +1677,8 @@ NF4\ QLoRA
 | Checkpoint    | Gradient checkpoint |
 | Optimizer     | Paged AdamW         |
 
+上表为**历史实跑口径**（Gemma4 SFT2：r32/α64）。当前设计基线：r64/α128、q/k/v/o、BF16 compute、DeepSpeed ZeRO-2（附件母版 §1.10）。注意 rank 相同不保证跨模型训练容量等价，需核对实际模块名与可训练参数量。
+
 ---
 
 # Distributed Training
@@ -1747,6 +1760,30 @@ mask：
 ```math
 M=1
 ```
+
+---
+
+# 14. SFT 的出口：继续训练、切 RM，还是停
+
+```text
+Support 低 / All-Fail 高：
+候选能力不足
+→ 继续补 SFT 数据或训练
+
+Support 高 + Mixed 高：
+会生成但不稳定
+→ 剩余问题转成相对选择
+→ 进入 RM
+
+Support 高 + Mixed 低：
+生成已稳定
+→ 不必为做 RL 而强行构造 RM/RL
+→ 允许在此结束训练路线
+```
+
+判据是**能力覆盖与信号可信度**，不是「SFT 必须打到极限」的线性前提。同时不得把「RL 只能放大已存在的能力」写成普遍定律——它的实际含义是：当合格候选极少或奖励信号不可靠时，先补示范往往更值得验证。
+
+loss 下降是优化诊断，不是产品验收。SFT 验收看相对基线的语言、角色、长历史承接、格式、信息密度、重复与目标回复长度。
 
 ---
 
